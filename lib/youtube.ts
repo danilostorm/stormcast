@@ -159,7 +159,7 @@ export function maximumVideoMinutes() {
 export async function inspectYouTube(input: string): Promise<YouTubeMetadata> {
   const normalized = normalizeYouTubeUrl(input);
   const executable = runtimeValue("STORMCAST_YTDLP_PATH") || "yt-dlp";
-  const args = [
+  const baseArgs = [
     "--dump-single-json",
     "--skip-download",
     "--no-playlist",
@@ -170,13 +170,44 @@ export async function inspectYouTube(input: string): Promise<YouTubeMetadata> {
     "2",
   ];
   const runtimeProcess = typeof process !== "undefined" ? process : undefined;
-  if (runtimeProcess?.execPath)
-    args.push("--js-runtimes", `node:${runtimeProcess.execPath}`);
   const cookiesPath = runtimeValue("STORMCAST_YTDLP_COOKIES");
-  if (cookiesPath) args.push("--cookies", cookiesPath);
-  args.push(normalized.canonicalUrl);
-
-  const output = await executeFile(executable, args);
+  const cookiesArgs = cookiesPath ? ["--cookies", cookiesPath] : [];
+  const nodeArgs = runtimeProcess?.execPath
+    ? ["--js-runtimes", `node:${runtimeProcess.execPath}`]
+    : [];
+  const attempts = [
+    [...nodeArgs],
+    [
+      ...nodeArgs,
+      "--extractor-args",
+      "youtube:player_client=default,-web_safari",
+    ],
+    ["--extractor-args", "youtube:player_client=android_vr"],
+  ];
+  let output = "";
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      output = await executeFile(executable, [
+        ...baseArgs,
+        ...attempt,
+        ...cookiesArgs,
+        normalized.canonicalUrl,
+      ]);
+      break;
+    } catch (error) {
+      if (error instanceof YouTubeInspectionError && error.status !== 502)
+        throw error;
+      lastError = error;
+    }
+  }
+  if (!output) {
+    if (lastError instanceof YouTubeInspectionError) throw lastError;
+    throw new YouTubeInspectionError(
+      "Não foi possível consultar o vídeo no YouTube. Tente novamente.",
+      502,
+    );
+  }
   let metadata: Record<string, unknown>;
   try {
     metadata = JSON.parse(output) as Record<string, unknown>;
