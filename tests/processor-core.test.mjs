@@ -109,6 +109,8 @@ test("rejeita cortes inválidos e sobrepostos", () => {
         reason: "Motivo",
         start_seconds: 10,
         end_seconds: 70,
+        complete_thought: true,
+        ending_text: "Conclusão principal.",
         score: 92,
       },
       {
@@ -118,6 +120,8 @@ test("rejeita cortes inválidos e sobrepostos", () => {
         reason: "Motivo",
         start_seconds: 15,
         end_seconds: 68,
+        complete_thought: true,
+        ending_text: "Conclusão sobreposta.",
         score: 99,
       },
       {
@@ -127,6 +131,8 @@ test("rejeita cortes inválidos e sobrepostos", () => {
         reason: "Motivo",
         start_seconds: 80,
         end_seconds: 88,
+        complete_thought: true,
+        ending_text: "Conclusão curta.",
         score: 90,
       },
       {
@@ -136,6 +142,8 @@ test("rejeita cortes inválidos e sobrepostos", () => {
         reason: "Motivo",
         start_seconds: 100,
         end_seconds: 160,
+        complete_thought: true,
+        ending_text: "Conclusão do segundo trecho.",
         score: 88,
       },
     ],
@@ -146,4 +154,44 @@ test("rejeita cortes inválidos e sobrepostos", () => {
   assert.equal(result.length, 2);
   assert.equal(result[0].title, "Muito sobreposto");
   assert.equal(result[1].title, "Segundo válido");
+});
+
+test("usa a duração como alvo e rejeita assunto sem conclusão", () => {
+  const segments = Array.from({ length: 24 }, (_, index) => ({
+    start: index * 10,
+    end: (index + 1) * 10,
+    text: `Parte ${index} da história${index === 13 ? "." : ","}`,
+  }));
+  const result = normalizeClipCandidates(
+    [
+      {
+        title: "História completa",
+        hook: "O show que aconteceu na igreja",
+        caption: "Uma história com conclusão.",
+        reason: "Inclui contexto, desenvolvimento e desfecho.",
+        start_seconds: 10,
+        end_seconds: 140,
+        complete_thought: true,
+        ending_text: "E então todos entenderam o que aconteceu.",
+        score: 95,
+      },
+      {
+        title: "Assunto interrompido",
+        hook: "Começa bem, mas não termina",
+        caption: "Trecho incompleto.",
+        reason: "Ainda faltou o desfecho.",
+        start_seconds: 150,
+        end_seconds: 240,
+        complete_thought: false,
+        ending_text: "E foi aí que...",
+        score: 99,
+      },
+    ],
+    segments,
+    240,
+    90,
+  );
+  assert.equal(result.length, 1);
+  assert.equal(result[0].title, "História completa");
+  assert.equal(result[0].durationSeconds, 130);
 });
