@@ -9,7 +9,18 @@ interface Env {
   STORMCAST_ADMIN_PASSWORD?: string;
   STORMCAST_ADMIN_NAME?: string;
   STORMCAST_DISABLE_REGISTRATION?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_ANALYSIS_MODEL?: string;
+  OPENAI_TRANSCRIPTION_MODEL?: string;
+  STORMCAST_FFMPEG_PATH?: string;
+  STORMCAST_FFPROBE_PATH?: string;
+  STORMCAST_MEDIA_DIR?: string;
+  STORMCAST_MAX_VIDEO_MINUTES?: string;
+  STORMCAST_MIN_FREE_GB?: string;
+  STORMCAST_PROCESSOR_ENABLED?: string;
   STORMCAST_SESSION_DAYS?: string;
+  STORMCAST_YTDLP_COOKIES?: string;
+  STORMCAST_YTDLP_PATH?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {

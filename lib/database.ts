@@ -28,11 +28,24 @@ type NodeDatabase = {
 
 export type RuntimeBindings = {
   DB?: D1DatabaseLike;
+  OPENAI_API_KEY?: string;
+  OPENAI_ANALYSIS_MODEL?: string;
+  OPENAI_TRANSCRIPTION_MODEL?: string;
   STORMCAST_ADMIN_EMAIL?: string;
   STORMCAST_ADMIN_PASSWORD?: string;
   STORMCAST_ADMIN_NAME?: string;
   STORMCAST_DISABLE_REGISTRATION?: string;
+  STORMCAST_FFMPEG_PATH?: string;
+  STORMCAST_FFMPEG_THREADS?: string;
+  STORMCAST_FFPROBE_PATH?: string;
+  STORMCAST_MEDIA_DIR?: string;
+  STORMCAST_MAX_VIDEO_MINUTES?: string;
+  STORMCAST_MIN_FREE_GB?: string;
+  STORMCAST_PROCESSOR_ENABLED?: string;
+  STORMCAST_PROCESSOR_POLL_MS?: string;
   STORMCAST_SESSION_DAYS?: string;
+  STORMCAST_YTDLP_COOKIES?: string;
+  STORMCAST_YTDLP_PATH?: string;
 };
 
 declare global {
@@ -67,6 +80,56 @@ const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id)`,
   `CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions (expires_at)`,
+  `CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_platform TEXT NOT NULL DEFAULT 'YouTube',
+    source_video_id TEXT NOT NULL,
+    source_duration_seconds INTEGER NOT NULL DEFAULT 0,
+    requested_analysis_minutes INTEGER NOT NULL,
+    analysis_seconds INTEGER NOT NULL DEFAULT 0,
+    requested_clip_seconds INTEGER NOT NULL DEFAULT 60,
+    format TEXT NOT NULL DEFAULT '9:16',
+    framing TEXT NOT NULL DEFAULT 'fit',
+    prompt TEXT NOT NULL DEFAULT '',
+    caption_style TEXT NOT NULL DEFAULT 'impact',
+    thumbnail_url TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT NOT NULL DEFAULT 'Aguardando processador',
+    progress INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    credits_charged INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    started_at INTEGER,
+    completed_at INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS projects_user_idx ON projects (user_id)`,
+  `CREATE INDEX IF NOT EXISTS projects_status_idx ON projects (status)`,
+  `CREATE INDEX IF NOT EXISTS projects_created_idx ON projects (created_at)`,
+  `CREATE TABLE IF NOT EXISTS clips (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    hook TEXT NOT NULL,
+    caption TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    poster_file_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS clips_project_idx ON clips (project_id)`,
+  `CREATE INDEX IF NOT EXISTS clips_user_idx ON clips (user_id)`,
 ];
 
 function cloudflareDatabase() {
