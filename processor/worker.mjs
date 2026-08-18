@@ -513,25 +513,48 @@ async function inspectSource(db, job) {
     throw new Error(
       "O identificador do vídeo não corresponde ao link armazenado.",
     );
-  const result = await runCommand(
-    db,
-    job.id,
-    ytDlpPath,
+  const baseArguments = [
+    "--dump-single-json",
+    "--skip-download",
+    "--no-playlist",
+    "--no-warnings",
+    "--socket-timeout",
+    "20",
+    "--retries",
+    "2",
+  ];
+  const attempts = [
+    [...javascriptRuntimeArguments()],
     [
-      "--dump-single-json",
-      "--skip-download",
-      "--no-playlist",
-      "--no-warnings",
-      "--socket-timeout",
-      "20",
-      "--retries",
-      "2",
       ...javascriptRuntimeArguments(),
-      ...cookiesArguments(),
-      source.canonicalUrl,
+      "--extractor-args",
+      "youtube:player_client=default,-web_safari",
     ],
-    { timeout: 90_000, maximumOutput: 3 * 1024 * 1024 },
-  );
+    ["--extractor-args", "youtube:player_client=android_vr"],
+  ];
+  let result = null,
+    lastError = null;
+  for (const attempt of attempts) {
+    try {
+      result = await runCommand(
+        db,
+        job.id,
+        ytDlpPath,
+        [
+          ...baseArguments,
+          ...attempt,
+          ...cookiesArguments(),
+          source.canonicalUrl,
+        ],
+        { timeout: 90_000, maximumOutput: 3 * 1024 * 1024 },
+      );
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!result)
+    throw lastError || new Error("O YouTube recusou a consulta do vídeo.");
   let metadata;
   try {
     metadata = JSON.parse(result.stdout);
@@ -567,14 +590,21 @@ async function downloadSource(db, job, metadata, workDirectory) {
   });
   const outputTemplate = join(workDirectory, "source.%(ext)s");
   const attempts = [
-    ["bv*[height<=1080][vcodec!*=av01]+ba/b[height<=1080]", []],
+    [
+      "bv*[height<=1080][vcodec!*=av01]+ba/b[height<=1080]",
+      [...javascriptRuntimeArguments()],
+    ],
     [
       "bv*[height<=1080]+ba/b[height<=1080]",
-      ["--extractor-args", "youtube:player_client=web,web_safari"],
+      [
+        ...javascriptRuntimeArguments(),
+        "--extractor-args",
+        "youtube:player_client=default,-web_safari",
+      ],
     ],
     [
       "b[height<=1080]/b",
-      ["--extractor-args", "youtube:player_client=android_vr,web"],
+      ["--extractor-args", "youtube:player_client=android_vr"],
     ],
   ];
   let result = null,
@@ -609,7 +639,6 @@ async function downloadSource(db, job, metadata, workDirectory) {
           "--force-keyframes-at-cuts",
           "--print",
           "after_move:__STORMCAST_FILE__:%(filepath)s",
-          ...javascriptRuntimeArguments(),
           ...cookiesArguments(),
           "-o",
           outputTemplate,
@@ -1389,6 +1418,8 @@ async function checkConfiguration() {
   db.prepare("SELECT 1").get();
   db.close();
   let ytVersion = "indisponível";
+  let ejsVersion = "indisponível";
+  let nodeVersion = "indisponível";
   let ffmpegVersion = "indisponível";
   let faceTracking = "fallback central";
   try {
@@ -1399,6 +1430,34 @@ async function checkConfiguration() {
     );
   } catch {
     failures.push(`yt-dlp não encontrado em ${ytDlpPath}`);
+  }
+  try {
+    ejsVersion = cleanText(
+      await checkCommand(pythonPath, [
+        "-c",
+        "from importlib.metadata import version; print(version('yt-dlp-ejs'))",
+      ]),
+      "indisponível",
+      80,
+    );
+  } catch {
+    failures.push(
+      `yt-dlp-ejs não instalado. Execute: ${pythonPath} -m pip install -U \"yt-dlp[default]\"`,
+    );
+  }
+  try {
+    nodeVersion = cleanText(
+      await checkCommand(process.execPath, ["--version"]),
+      "indisponível",
+      40,
+    );
+    const major = Number(/^v?(\d+)/.exec(nodeVersion)?.[1] || 0);
+    if (major < 22)
+      failures.push(
+        "O yt-dlp exige Node.js 22 ou superior para resolver os desafios do YouTube",
+      );
+  } catch {
+    failures.push(`Node.js não encontrado em ${process.execPath}`);
   }
   try {
     ffmpegVersion = cleanText(
@@ -1437,6 +1496,8 @@ async function checkConfiguration() {
   log("Banco:", databasePath);
   log("Mídia:", mediaRoot);
   log("yt-dlp:", ytVersion);
+  log("yt-dlp-ejs:", ejsVersion);
+  log("Node.js para YouTube:", nodeVersion);
   log("FFmpeg:", ffmpegVersion);
   log("Enquadramento facial:", faceTracking);
   log("Modelos:", `${transcriptionModel} + ${analysisModel}`);
