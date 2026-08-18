@@ -2,7 +2,17 @@
 
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statfsSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -17,21 +27,32 @@ import {
 } from "./core.mjs";
 
 const argv = new Set(process.argv.slice(2));
-const databasePath = resolve(process.env.STORMCAST_DB_PATH || join(process.cwd(), ".data/stormcast.db"));
-const mediaRoot = resolve(process.env.STORMCAST_MEDIA_DIR || join(dirname(databasePath), "media"));
+const databasePath = resolve(
+  process.env.STORMCAST_DB_PATH || join(process.cwd(), ".data/stormcast.db"),
+);
+const mediaRoot = resolve(
+  process.env.STORMCAST_MEDIA_DIR || join(dirname(databasePath), "media"),
+);
 const workRoot = resolve(mediaRoot, "work");
 const clipsRoot = resolve(mediaRoot, "clips");
 const ytDlpPath = process.env.STORMCAST_YTDLP_PATH || "yt-dlp";
 const ffmpegPath = process.env.STORMCAST_FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.STORMCAST_FFPROBE_PATH || "ffprobe";
-const pythonPath = process.env.STORMCAST_PYTHON_PATH || "/opt/stormcast-tools/bin/python";
+const pythonPath =
+  process.env.STORMCAST_PYTHON_PATH || "/opt/stormcast-tools/bin/python";
 const faceTrackerPath = resolve(process.cwd(), "processor/focus.py");
-const transcriptionModel = process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1";
+const transcriptionModel =
+  process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1";
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-mini";
 const ffmpegThreads = integerEnv("STORMCAST_FFMPEG_THREADS", 8, 1, 16);
 const maximumMinutes = integerEnv("STORMCAST_MAX_VIDEO_MINUTES", 90, 5, 240);
 const minimumFreeGigabytes = integerEnv("STORMCAST_MIN_FREE_GB", 5, 2, 100);
-const pollingMilliseconds = integerEnv("STORMCAST_PROCESSOR_POLL_MS", 3000, 1000, 30000);
+const pollingMilliseconds = integerEnv(
+  "STORMCAST_PROCESSOR_POLL_MS",
+  3000,
+  1000,
+  30000,
+);
 const openAiKey = process.env.OPENAI_API_KEY || "";
 const processorEnabled = process.env.STORMCAST_PROCESSOR_ENABLED === "1";
 
@@ -44,44 +65,163 @@ class ShutdownError extends Error {}
 
 function integerEnv(name, fallback, minimum, maximum) {
   const parsed = Number(process.env[name]);
-  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.floor(parsed))) : fallback;
+  return Number.isFinite(parsed)
+    ? Math.max(minimum, Math.min(maximum, Math.floor(parsed)))
+    : fallback;
 }
 
 function renderOptions(job) {
   let value = {};
-  try { value = JSON.parse(job.render_options || "{}"); } catch { value = {}; }
+  try {
+    value = JSON.parse(job.render_options || "{}");
+  } catch {
+    value = {};
+  }
   const presets = {
-    impact: { highlightColor: "#ffd700", textCase: "upper", captionSize: 62, animation: "pop" },
+    impact: {
+      highlightColor: "#ffd700",
+      textCase: "upper",
+      captionSize: 62,
+      animation: "pop",
+    },
     karaoke: { highlightColor: "#b8ff59", captionSize: 58, animation: "pop" },
-    clean: { primaryColor: "#ffffff", highlightColor: "#ffffff", captionSize: 48, animation: "fade" },
-    bold: { primaryColor: "#ffffff", highlightColor: "#ffd84d", captionSize: 64, outline: 5, textCase: "upper" },
-    box: { primaryColor: "#111111", highlightColor: "#7c3cff", captionSize: 54 },
+    clean: {
+      primaryColor: "#ffffff",
+      highlightColor: "#ffffff",
+      captionSize: 48,
+      animation: "fade",
+    },
+    bold: {
+      primaryColor: "#ffffff",
+      highlightColor: "#ffd84d",
+      captionSize: 64,
+      outline: 5,
+      textCase: "upper",
+    },
+    box: {
+      primaryColor: "#111111",
+      highlightColor: "#7c3cff",
+      captionSize: 54,
+    },
     keyword: { highlightColor: "#ff4f87", captionSize: 58 },
-    minimal: { primaryColor: "#ffffff", highlightColor: "#ffffff", captionSize: 42, outline: 1, animation: "fade" },
-    neon: { primaryColor: "#6cf3ff", highlightColor: "#ff5ee7", captionSize: 58, animation: "bounce" },
-    podcast: { primaryColor: "#ffffff", highlightColor: "#b8ff59", captionSize: 50, captionPosition: "bottom" },
-    cinematic: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#d8c19f", captionSize: 46, animation: "fade" },
-    gospel: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#ffe259", captionSize: 58, textCase: "upper" },
-    reels: { primaryColor: "#ffffff", highlightColor: "#ff4fc4", captionSize: 60, animation: "pop" },
-    twolines: { primaryColor: "#ffffff", highlightColor: "#ffd700", captionSize: 52, wordsPerBlock: 8 },
-    lower: { primaryColor: "#ffffff", highlightColor: "#b8ff59", captionSize: 44, captionPosition: "bottom" },
-    title: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#ffd700", captionSize: 50, captionPosition: "top" },
+    minimal: {
+      primaryColor: "#ffffff",
+      highlightColor: "#ffffff",
+      captionSize: 42,
+      outline: 1,
+      animation: "fade",
+    },
+    neon: {
+      primaryColor: "#6cf3ff",
+      highlightColor: "#ff5ee7",
+      captionSize: 58,
+      animation: "bounce",
+    },
+    podcast: {
+      primaryColor: "#ffffff",
+      highlightColor: "#b8ff59",
+      captionSize: 50,
+      captionPosition: "bottom",
+    },
+    cinematic: {
+      captionFont: "DejaVu Serif",
+      primaryColor: "#ffffff",
+      highlightColor: "#d8c19f",
+      captionSize: 46,
+      animation: "fade",
+    },
+    gospel: {
+      captionFont: "DejaVu Serif",
+      primaryColor: "#ffffff",
+      highlightColor: "#ffe259",
+      captionSize: 58,
+      textCase: "upper",
+    },
+    reels: {
+      primaryColor: "#ffffff",
+      highlightColor: "#ff4fc4",
+      captionSize: 60,
+      animation: "pop",
+    },
+    twolines: {
+      primaryColor: "#ffffff",
+      highlightColor: "#ffd700",
+      captionSize: 52,
+      wordsPerBlock: 8,
+    },
+    lower: {
+      primaryColor: "#ffffff",
+      highlightColor: "#b8ff59",
+      captionSize: 44,
+      captionPosition: "bottom",
+    },
+    title: {
+      captionFont: "DejaVu Serif",
+      primaryColor: "#ffffff",
+      highlightColor: "#ffd700",
+      captionSize: 50,
+      captionPosition: "top",
+    },
   };
-  const preset = job.caption_style === "brand" ? {} : (presets[job.caption_style] || presets.impact);
+  const preset =
+    job.caption_style === "brand"
+      ? {}
+      : presets[job.caption_style] || presets.impact;
   return {
-    manualPosition: Math.max(-1, Math.min(1, Number(value.manualPosition) || 0)),
+    manualPosition: Math.max(
+      -1,
+      Math.min(1, Number(value.manualPosition) || 0),
+    ),
     blurStrength: Math.max(0, Math.min(50, Number(value.blurStrength) || 20)),
-    safeArea: ["shorts", "reels", "tiktok"].includes(value.safeArea) ? value.safeArea : "shorts",
-    captionFont: cleanText(preset.captionFont || value.captionFont, "DejaVu Sans", 80),
-    captionSize: Math.max(28, Math.min(96, Number(preset.captionSize || value.captionSize) || 54)),
-    captionPosition: ["top", "middle", "bottom"].includes(preset.captionPosition || value.captionPosition) ? (preset.captionPosition || value.captionPosition) : "bottom",
-    primaryColor: /^#[0-9a-f]{6}$/i.test(preset.primaryColor || value.primaryColor) ? (preset.primaryColor || value.primaryColor) : "#ffffff",
-    highlightColor: /^#[0-9a-f]{6}$/i.test(preset.highlightColor || value.highlightColor) ? (preset.highlightColor || value.highlightColor) : "#ffd700",
-    outline: Math.max(0, Math.min(8, Number(preset.outline ?? value.outline) || 0)),
+    safeArea: ["shorts", "reels", "tiktok"].includes(value.safeArea)
+      ? value.safeArea
+      : "shorts",
+    captionFont: cleanText(
+      preset.captionFont || value.captionFont,
+      "DejaVu Sans",
+      80,
+    ),
+    captionSize: Math.max(
+      28,
+      Math.min(96, Number(preset.captionSize || value.captionSize) || 54),
+    ),
+    captionPosition: ["top", "middle", "bottom"].includes(
+      preset.captionPosition || value.captionPosition,
+    )
+      ? preset.captionPosition || value.captionPosition
+      : "bottom",
+    primaryColor: /^#[0-9a-f]{6}$/i.test(
+      preset.primaryColor || value.primaryColor,
+    )
+      ? preset.primaryColor || value.primaryColor
+      : "#ffffff",
+    highlightColor: /^#[0-9a-f]{6}$/i.test(
+      preset.highlightColor || value.highlightColor,
+    )
+      ? preset.highlightColor || value.highlightColor
+      : "#ffd700",
+    outline: Math.max(
+      0,
+      Math.min(8, Number(preset.outline ?? value.outline) || 0),
+    ),
     shadow: Math.max(0, Math.min(8, Number(value.shadow) || 0)),
-    textCase: ["original", "upper", "lower"].includes(preset.textCase || value.textCase) ? (preset.textCase || value.textCase) : "original",
-    wordsPerBlock: Math.max(1, Math.min(10, Math.round(Number(preset.wordsPerBlock || value.wordsPerBlock) || 5))),
-    animation: ["none", "pop", "fade", "bounce"].includes(preset.animation || value.animation) ? (preset.animation || value.animation) : "pop",
+    textCase: ["original", "upper", "lower"].includes(
+      preset.textCase || value.textCase,
+    )
+      ? preset.textCase || value.textCase
+      : "original",
+    wordsPerBlock: Math.max(
+      1,
+      Math.min(
+        10,
+        Math.round(Number(preset.wordsPerBlock || value.wordsPerBlock) || 5),
+      ),
+    ),
+    animation: ["none", "pop", "fade", "bounce"].includes(
+      preset.animation || value.animation,
+    )
+      ? preset.animation || value.animation
+      : "pop",
     removeFillers: value.removeFillers !== false,
     subtitleText: cleanText(value.subtitleText, "", 120),
   };
@@ -129,8 +269,16 @@ function schema(db) {
     );
     CREATE TABLE IF NOT EXISTS processor_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
   `);
-  const projectColumns = new Set(db.prepare("PRAGMA table_info(projects)").all().map((column) => column.name));
-  if (!projectColumns.has("render_options")) db.exec("ALTER TABLE projects ADD COLUMN render_options TEXT NOT NULL DEFAULT '{}'");
+  const projectColumns = new Set(
+    db
+      .prepare("PRAGMA table_info(projects)")
+      .all()
+      .map((column) => column.name),
+  );
+  if (!projectColumns.has("render_options"))
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN render_options TEXT NOT NULL DEFAULT '{}'",
+    );
 }
 
 function openDatabase() {
@@ -142,35 +290,59 @@ function openDatabase() {
 
 function updateProject(db, jobId, status, stage, progress, extra = {}) {
   const fields = ["status = ?", "stage = ?", "progress = ?", "updated_at = ?"];
-  const values = [status, stage, Math.max(0, Math.min(100, Math.round(progress))), Date.now()];
+  const values = [
+    status,
+    stage,
+    Math.max(0, Math.min(100, Math.round(progress))),
+    Date.now(),
+  ];
   for (const [key, value] of Object.entries(extra)) {
-    const allowed = new Set(["title", "source_duration_seconds", "analysis_seconds", "error_message", "started_at", "completed_at", "cancel_requested"]);
+    const allowed = new Set([
+      "title",
+      "source_duration_seconds",
+      "analysis_seconds",
+      "error_message",
+      "started_at",
+      "completed_at",
+      "cancel_requested",
+    ]);
     if (!allowed.has(key)) continue;
     fields.push(`${key} = ?`);
     values.push(value);
   }
   values.push(jobId);
-  db.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  db.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ?`).run(
+    ...values,
+  );
 }
 
 function currentJob(db, id) {
-  return db.prepare("SELECT cancel_requested, status FROM projects WHERE id = ? LIMIT 1").get(id);
+  return db
+    .prepare(
+      "SELECT cancel_requested, status FROM projects WHERE id = ? LIMIT 1",
+    )
+    .get(id);
 }
 
 function processorState(db, key, value) {
-  db.prepare("INSERT INTO processor_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
-    .run(key, String(value), Date.now());
+  db.prepare(
+    "INSERT INTO processor_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+  ).run(key, String(value), Date.now());
 }
 
 function assertContinuing(db, jobId) {
-  if (stopRequested) throw new ShutdownError("Processador encerrado pelo sistema.");
+  if (stopRequested)
+    throw new ShutdownError("Processador encerrado pelo sistema.");
   const row = currentJob(db, jobId);
-  if (!row || Number(row.cancel_requested) === 1 || row.status === "cancelled") throw new CancelledError("Cancelado pelo usuário.");
+  if (!row || Number(row.cancel_requested) === 1 || row.status === "cancelled")
+    throw new CancelledError("Cancelado pelo usuário.");
 }
 
 function commandError(command, stderr, code) {
   const detail = cleanText(stderr, "", 900);
-  const error = new Error(`${command} encerrou com código ${code}.${detail ? ` ${detail}` : ""}`);
+  const error = new Error(
+    `${command} encerrou com código ${code}.${detail ? ` ${detail}` : ""}`,
+  );
   error.command = command;
   return error;
 }
@@ -199,11 +371,14 @@ function runCommand(db, jobId, command, args, options = {}) {
       }
     }, 1000);
     timer.unref();
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 3000).unref();
-      finish(new Error(`${command} excedeu o tempo máximo permitido.`));
-    }, options.timeout || 2 * 60 * 60_000);
+    const timeout = setTimeout(
+      () => {
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 3000).unref();
+        finish(new Error(`${command} excedeu o tempo máximo permitido.`));
+      },
+      options.timeout || 2 * 60 * 60_000,
+    );
     timeout.unref();
 
     function finish(error, output) {
@@ -247,25 +422,36 @@ async function openAiRequest(db, jobId, pathname, options) {
     }
   }, 1000);
   interval.unref();
-  const timeout = setTimeout(() => controller.abort(), options.timeout || 30 * 60_000);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.timeout || 30 * 60_000,
+  );
   timeout.unref();
 
   try {
     const response = await fetch(`https://api.openai.com/v1${pathname}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${openAiKey}`, ...(options.headers || {}) },
+      headers: {
+        Authorization: `Bearer ${openAiKey}`,
+        ...(options.headers || {}),
+      },
       body: options.body,
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const detail = cleanText(payload?.error?.message, "A OpenAI recusou a solicitação.", 500);
+      const detail = cleanText(
+        payload?.error?.message,
+        "A OpenAI recusou a solicitação.",
+        500,
+      );
       throw new Error(`OpenAI (${response.status}): ${detail}`);
     }
     return payload;
   } catch (error) {
     if (cancellationError) throw cancellationError;
-    if (error?.name === "AbortError") throw new Error("A OpenAI excedeu o tempo máximo de resposta.");
+    if (error?.name === "AbortError")
+      throw new Error("A OpenAI excedeu o tempo máximo de resposta.");
     throw error;
   } finally {
     clearInterval(interval);
@@ -277,22 +463,30 @@ async function openAiRequest(db, jobId, pathname, options) {
 function claimNext(db) {
   db.exec("BEGIN IMMEDIATE");
   try {
-    const job = db.prepare(`
+    const job = db
+      .prepare(
+        `
       SELECT p.*, u.credits AS user_credits, u.monthly_credit_limit AS user_monthly_credit_limit
       FROM projects p JOIN users u ON u.id = p.user_id
       WHERE p.status = 'queued' AND p.cancel_requested = 0 AND u.status = 'active'
       ORDER BY p.created_at ASC LIMIT 1
-    `).get();
+    `,
+      )
+      .get();
     if (!job) {
       db.exec("COMMIT");
       return null;
     }
     const now = Date.now();
-    const result = db.prepare(`
+    const result = db
+      .prepare(
+        `
       UPDATE projects SET status = 'downloading', stage = 'Validando vídeo do YouTube', progress = 3,
         error_message = NULL, started_at = ?, updated_at = ?
       WHERE id = ? AND status = 'queued'
-    `).run(now, now, job.id);
+    `,
+      )
+      .run(now, now, job.id);
     db.exec("COMMIT");
     return Number(result.changes) === 1 ? job : null;
   } catch (error) {
@@ -302,27 +496,59 @@ function claimNext(db) {
 }
 
 function cookiesArguments() {
-  return process.env.STORMCAST_YTDLP_COOKIES ? ["--cookies", process.env.STORMCAST_YTDLP_COOKIES] : [];
+  return process.env.STORMCAST_YTDLP_COOKIES
+    ? ["--cookies", process.env.STORMCAST_YTDLP_COOKIES]
+    : [];
+}
+
+function javascriptRuntimeArguments() {
+  return ["--js-runtimes", `node:${process.execPath}`];
 }
 
 async function inspectSource(db, job) {
   const source = normalizeYouTubeUrl(job.source_url);
-  if (source.videoId !== job.source_video_id) throw new Error("O identificador do vídeo não corresponde ao link armazenado.");
-  const result = await runCommand(db, job.id, ytDlpPath, [
-    "--dump-single-json", "--skip-download", "--no-playlist", "--no-warnings",
-    "--socket-timeout", "20", "--retries", "2", ...cookiesArguments(), source.canonicalUrl,
-  ], { timeout: 90_000, maximumOutput: 3 * 1024 * 1024 });
+  if (source.videoId !== job.source_video_id)
+    throw new Error(
+      "O identificador do vídeo não corresponde ao link armazenado.",
+    );
+  const result = await runCommand(
+    db,
+    job.id,
+    ytDlpPath,
+    [
+      "--dump-single-json",
+      "--skip-download",
+      "--no-playlist",
+      "--no-warnings",
+      "--socket-timeout",
+      "20",
+      "--retries",
+      "2",
+      ...javascriptRuntimeArguments(),
+      ...cookiesArguments(),
+      source.canonicalUrl,
+    ],
+    { timeout: 90_000, maximumOutput: 3 * 1024 * 1024 },
+  );
   let metadata;
   try {
     metadata = JSON.parse(result.stdout);
   } catch {
     throw new Error("O YouTube retornou metadados inválidos.");
   }
-  if (metadata.id !== source.videoId) throw new Error("O YouTube retornou outro vídeo.");
+  if (metadata.id !== source.videoId)
+    throw new Error("O YouTube retornou outro vídeo.");
   const duration = Math.ceil(Number(metadata.duration));
-  if (!Number.isFinite(duration) || duration < 10) throw new Error("Não foi possível descobrir a duração real do vídeo.");
-  if (duration > maximumMinutes * 60) throw new Error(`O vídeo ultrapassa o limite de ${maximumMinutes} minutos.`);
-  const analysisSeconds = Math.min(duration, Math.max(60, Number(job.requested_analysis_minutes) * 60));
+  if (!Number.isFinite(duration) || duration < 10)
+    throw new Error("Não foi possível descobrir a duração real do vídeo.");
+  if (duration > maximumMinutes * 60)
+    throw new Error(
+      `O vídeo ultrapassa o limite de ${maximumMinutes} minutos.`,
+    );
+  const analysisSeconds = Math.min(
+    duration,
+    Math.max(60, Number(job.requested_analysis_minutes) * 60),
+  );
   return {
     source,
     duration,
@@ -340,51 +566,134 @@ async function downloadSource(db, job, metadata, workDirectory) {
   const outputTemplate = join(workDirectory, "source.%(ext)s");
   const attempts = [
     ["bv*[height<=1080][vcodec!*=av01]+ba/b[height<=1080]", []],
-    ["bv*[height<=1080]+ba/b[height<=1080]", ["--extractor-args", "youtube:player_client=web,web_safari"]],
-    ["b[height<=1080]/b", ["--extractor-args", "youtube:player_client=android_vr,web"]],
+    [
+      "bv*[height<=1080]+ba/b[height<=1080]",
+      ["--extractor-args", "youtube:player_client=web,web_safari"],
+    ],
+    [
+      "b[height<=1080]/b",
+      ["--extractor-args", "youtube:player_client=android_vr,web"],
+    ],
   ];
-  let result = null, lastError = null;
+  let result = null,
+    lastError = null;
   for (let index = 0; index < attempts.length; index += 1) {
     const [formatSelector, extractorArgs] = attempts[index];
     try {
-      result = await runCommand(db, job.id, ytDlpPath, [
-        "--no-playlist", "--no-progress", "--no-warnings", "--restrict-filenames",
-        "--socket-timeout", "30", "--retries", "5", "--fragment-retries", "5",
-        "--max-filesize", "2G", "-f", formatSelector, ...extractorArgs,
-        "--merge-output-format", "mp4", "--download-sections", `*0-${metadata.analysisSeconds}`,
-        "--force-keyframes-at-cuts", "--print", "after_move:__STORMCAST_FILE__:%(filepath)s",
-        ...cookiesArguments(), "-o", outputTemplate, metadata.source.canonicalUrl,
-      ], { timeout: 3 * 60 * 60_000 });
+      result = await runCommand(
+        db,
+        job.id,
+        ytDlpPath,
+        [
+          "--no-playlist",
+          "--no-progress",
+          "--no-warnings",
+          "--restrict-filenames",
+          "--socket-timeout",
+          "30",
+          "--retries",
+          "5",
+          "--fragment-retries",
+          "5",
+          "--max-filesize",
+          "2G",
+          "-f",
+          formatSelector,
+          ...extractorArgs,
+          "--merge-output-format",
+          "mp4",
+          "--download-sections",
+          `*0-${metadata.analysisSeconds}`,
+          "--force-keyframes-at-cuts",
+          "--print",
+          "after_move:__STORMCAST_FILE__:%(filepath)s",
+          ...javascriptRuntimeArguments(),
+          ...cookiesArguments(),
+          "-o",
+          outputTemplate,
+          metadata.source.canonicalUrl,
+        ],
+        { timeout: 3 * 60 * 60_000 },
+      );
       break;
     } catch (error) {
       lastError = error;
-      for (const name of readdirSync(workDirectory)) if (name.startsWith("source.")) rmSync(join(workDirectory, name), { force: true });
-      updateProject(db, job.id, "downloading", `Tentando fonte alternativa (${index + 2}/${attempts.length})`, 8 + index * 3);
+      for (const name of readdirSync(workDirectory))
+        if (name.startsWith("source."))
+          rmSync(join(workDirectory, name), { force: true });
+      updateProject(
+        db,
+        job.id,
+        "downloading",
+        `Tentando fonte alternativa (${index + 2}/${attempts.length})`,
+        8 + index * 3,
+      );
     }
   }
-  if (!result) throw lastError || new Error("Nenhuma fonte compatível foi encontrada.");
-  const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith("__STORMCAST_FILE__:"));
+  if (!result)
+    throw lastError || new Error("Nenhuma fonte compatível foi encontrada.");
+  const line = result.stdout
+    .split(/\r?\n/)
+    .find((value) => value.startsWith("__STORMCAST_FILE__:"));
   let sourcePath = line ? line.slice("__STORMCAST_FILE__:".length).trim() : "";
   if (!sourcePath) {
-    const fallback = readdirSync(workDirectory).find((name) => name.startsWith("source.") && !name.endsWith(".part"));
+    const fallback = readdirSync(workDirectory).find(
+      (name) => name.startsWith("source.") && !name.endsWith(".part"),
+    );
     if (fallback) sourcePath = join(workDirectory, fallback);
   }
   sourcePath = resolve(sourcePath);
-  if (!sourcePath.startsWith(resolve(workDirectory) + sep) || !existsSync(sourcePath)) throw new Error("O download terminou sem gerar um arquivo de vídeo válido.");
-  if (statSync(sourcePath).size > 2 * 1024 * 1024 * 1024) throw new Error("O vídeo ultrapassou o limite de 2 GB.");
+  if (
+    !sourcePath.startsWith(resolve(workDirectory) + sep) ||
+    !existsSync(sourcePath)
+  )
+    throw new Error(
+      "O download terminou sem gerar um arquivo de vídeo válido.",
+    );
+  if (statSync(sourcePath).size > 2 * 1024 * 1024 * 1024)
+    throw new Error("O vídeo ultrapassou o limite de 2 GB.");
   return sourcePath;
 }
 
-async function extractAudio(db, job, sourcePath, workDirectory, analysisSeconds) {
+async function extractAudio(
+  db,
+  job,
+  sourcePath,
+  workDirectory,
+  analysisSeconds,
+) {
   updateProject(db, job.id, "transcribing", "Preparando o áudio", 22);
   const pattern = join(workDirectory, "audio-%03d.mp3");
   await runCommand(db, job.id, ffmpegPath, [
-    "-y", "-hide_banner", "-loglevel", "error", "-i", sourcePath, "-t", String(analysisSeconds),
-    "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-f", "segment", "-segment_time", "900",
-    "-reset_timestamps", "1", pattern,
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    sourcePath,
+    "-t",
+    String(analysisSeconds),
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-b:a",
+    "48k",
+    "-f",
+    "segment",
+    "-segment_time",
+    "900",
+    "-reset_timestamps",
+    "1",
+    pattern,
   ]);
-  const files = readdirSync(workDirectory).filter((name) => /^audio-\d{3}\.mp3$/.test(name)).sort().map((name) => join(workDirectory, name));
-  if (!files.length) throw new Error("O vídeo não possui uma faixa de áudio utilizável.");
+  const files = readdirSync(workDirectory)
+    .filter((name) => /^audio-\d{3}\.mp3$/.test(name))
+    .sort()
+    .map((name) => join(workDirectory, name));
+  if (!files.length)
+    throw new Error("O vídeo não possui uma faixa de áudio utilizável.");
   return files;
 }
 
@@ -392,33 +701,63 @@ async function transcribe(db, job, audioFiles) {
   const segments = [];
   for (let index = 0; index < audioFiles.length; index += 1) {
     assertContinuing(db, job.id);
-    const progress = 28 + ((index / audioFiles.length) * 28);
-    updateProject(db, job.id, "transcribing", `Transcrevendo áudio (${index + 1}/${audioFiles.length})`, progress);
+    const progress = 28 + (index / audioFiles.length) * 28;
+    updateProject(
+      db,
+      job.id,
+      "transcribing",
+      `Transcrevendo áudio (${index + 1}/${audioFiles.length})`,
+      progress,
+    );
     const bytes = readFileSync(audioFiles[index]);
-    if (bytes.byteLength > 25 * 1024 * 1024) throw new Error("Um trecho de áudio ultrapassou o limite de 25 MB da transcrição.");
+    if (bytes.byteLength > 25 * 1024 * 1024)
+      throw new Error(
+        "Um trecho de áudio ultrapassou o limite de 25 MB da transcrição.",
+      );
     const form = new FormData();
-    form.append("file", new Blob([bytes], { type: "audio/mpeg" }), `trecho-${index + 1}.mp3`);
+    form.append(
+      "file",
+      new Blob([bytes], { type: "audio/mpeg" }),
+      `trecho-${index + 1}.mp3`,
+    );
     form.append("model", transcriptionModel);
     form.append("language", "pt");
     form.append("response_format", "verbose_json");
     form.append("timestamp_granularities[]", "segment");
     form.append("timestamp_granularities[]", "word");
-    const payload = await openAiRequest(db, job.id, "/audio/transcriptions", { body: form, timeout: 40 * 60_000 });
+    const payload = await openAiRequest(db, job.id, "/audio/transcriptions", {
+      body: form,
+      timeout: 40 * 60_000,
+    });
     const offset = index * 900;
     for (const segment of payload?.segments || []) {
       const start = Number(segment.start) + offset;
       const end = Number(segment.end) + offset;
       const text = cleanText(segment.text, "", 2000);
-      if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) segments.push({ start, end, text, words: [] });
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start && text)
+        segments.push({ start, end, text, words: [] });
     }
     for (const word of payload?.words || []) {
-      const start = Number(word.start) + offset, end = Number(word.end) + offset;
+      const start = Number(word.start) + offset,
+        end = Number(word.end) + offset;
       const text = cleanText(word.word, "", 100);
-      const segment = [...segments].reverse().find((item) => start >= item.start - .2 && start <= item.end + .2);
-      if (segment && Number.isFinite(start) && Number.isFinite(end) && end > start && text) segment.words.push({ word: text, start, end });
+      const segment = [...segments]
+        .reverse()
+        .find((item) => start >= item.start - 0.2 && start <= item.end + 0.2);
+      if (
+        segment &&
+        Number.isFinite(start) &&
+        Number.isFinite(end) &&
+        end > start &&
+        text
+      )
+        segment.words.push({ word: text, start, end });
     }
   }
-  if (!segments.length) throw new Error("A OpenAI não encontrou fala compreensível no intervalo analisado.");
+  if (!segments.length)
+    throw new Error(
+      "A OpenAI não encontrou fala compreensível no intervalo analisado.",
+    );
   return segments;
 }
 
@@ -434,31 +773,53 @@ async function selectClips(db, job, segments, analysisSeconds) {
       model: analysisModel,
       messages: [
         { role: "system", content: system },
-        { role: "user", content: `DIREÇÃO DO USUÁRIO:\n${direction}\n\nTRANSCRIÇÃO COM TEMPOS (segundos):\n${transcript}` },
+        {
+          role: "user",
+          content: `DIREÇÃO DO USUÁRIO:\n${direction}\n\nTRANSCRIÇÃO COM TEMPOS (segundos):\n${transcript}`,
+        },
       ],
       response_format: {
         type: "json_schema",
-        json_schema: { name: "stormcast_clip_selection", strict: true, schema: clipSelectionSchema },
+        json_schema: {
+          name: "stormcast_clip_selection",
+          strict: true,
+          schema: clipSelectionSchema,
+        },
       },
       max_completion_tokens: 6000,
     }),
     timeout: 30 * 60_000,
   });
   const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("A OpenAI não retornou a seleção dos cortes.");
+  if (typeof content !== "string")
+    throw new Error("A OpenAI não retornou a seleção dos cortes.");
   let parsed;
   try {
     parsed = JSON.parse(content);
   } catch {
     throw new Error("A seleção de cortes retornou um formato inválido.");
   }
-  const clips = normalizeClipCandidates(parsed.clips, segments, analysisSeconds, Number(job.requested_clip_seconds));
-  if (!clips.length) throw new Error("Nenhum trecho completo foi encontrado nesse intervalo. Tente analisar mais minutos ou ajustar a direção da IA.");
+  const clips = normalizeClipCandidates(
+    parsed.clips,
+    segments,
+    analysisSeconds,
+    Number(job.requested_clip_seconds),
+  );
+  if (!clips.length)
+    throw new Error(
+      "Nenhum trecho completo foi encontrado nesse intervalo. Tente analisar mais minutos ou ajustar a direção da IA.",
+    );
   return clips;
 }
 
 function escapedFilterPath(filePath) {
-  return resolve(filePath).replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'").replace(/,/g, "\\,").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  return resolve(filePath)
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+    .replace(/,/g, "\\,")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
 }
 
 function verticalCrop(focus = "0.5", widthRatio = "9/16") {
@@ -478,7 +839,10 @@ function videoFilter(job, subtitlePath, focusSamples = []) {
     return `[0:v]${verticalCrop(focusCropExpression(focusSamples))},scale=1080:1920,${subtitles}[v]`;
   }
   if (job.framing === "manual") {
-    const focus = Math.max(.08, Math.min(.92, .5 + options.manualPosition * .42));
+    const focus = Math.max(
+      0.08,
+      Math.min(0.92, 0.5 + options.manualPosition * 0.42),
+    );
     return `[0:v]${verticalCrop(String(focus))},scale=1080:1920,${subtitles}[v]`;
   }
   if (job.framing === "split") {
@@ -497,47 +861,132 @@ function videoFilter(job, subtitlePath, focusSamples = []) {
 }
 
 async function detectFocusSamples(db, job, sourcePath, clip) {
-  if (job.format !== "9:16" || !["auto", "face", "participant", "spotlight", "react"].includes(job.framing)) return [];
+  if (
+    job.format !== "9:16" ||
+    !["auto", "face", "participant", "spotlight", "react"].includes(job.framing)
+  )
+    return [];
   try {
-    const result = await runCommand(db, job.id, pythonPath, [
-      faceTrackerPath, "--video", sourcePath, "--start", String(clip.startSeconds),
-      "--duration", String(clip.durationSeconds), "--samples", String(Math.min(24, Math.max(8, Math.ceil(clip.durationSeconds / 3)))),
-    ], { timeout: 8 * 60_000, maximumOutput: 512 * 1024 });
+    const result = await runCommand(
+      db,
+      job.id,
+      pythonPath,
+      [
+        faceTrackerPath,
+        "--video",
+        sourcePath,
+        "--start",
+        String(clip.startSeconds),
+        "--duration",
+        String(clip.durationSeconds),
+        "--samples",
+        String(Math.min(24, Math.max(8, Math.ceil(clip.durationSeconds / 3)))),
+      ],
+      { timeout: 8 * 60_000, maximumOutput: 512 * 1024 },
+    );
     const payload = JSON.parse(result.stdout);
     return Array.isArray(payload?.samples) ? payload.samples : [];
   } catch (error) {
-    log("Foco automático indisponível; usando o centro:", error instanceof Error ? error.message : String(error));
+    log(
+      "Foco automático indisponível; usando o centro:",
+      error instanceof Error ? error.message : String(error),
+    );
     return [];
   }
 }
 
-async function renderClips(db, job, sourcePath, segments, clips, stagingDirectory) {
+async function renderClips(
+  db,
+  job,
+  sourcePath,
+  segments,
+  clips,
+  stagingDirectory,
+) {
   mkdirSync(stagingDirectory, { recursive: true, mode: 0o750 });
   const output = [];
   for (let index = 0; index < clips.length; index += 1) {
     const clip = clips[index];
-    const progress = 70 + ((index / clips.length) * 24);
-    updateProject(db, job.id, "rendering", `Renderizando corte ${index + 1} de ${clips.length}`, progress);
+    const progress = 70 + (index / clips.length) * 24;
+    updateProject(
+      db,
+      job.id,
+      "rendering",
+      `Renderizando corte ${index + 1} de ${clips.length}`,
+      progress,
+    );
     const base = `corte-${String(index + 1).padStart(2, "0")}`;
     const subtitlePath = join(stagingDirectory, `${base}.ass`);
     const videoPath = join(stagingDirectory, `${base}.mp4`);
     const posterPath = join(stagingDirectory, `${base}.jpg`);
-    const subtitle = buildAss(segments, clip.startSeconds, clip.endSeconds, { ...renderOptions(job), format: job.format, style: job.caption_style });
-    if (!subtitle) throw new Error(`Não há legenda sincronizada para o corte ${index + 1}.`);
+    const subtitle = buildAss(segments, clip.startSeconds, clip.endSeconds, {
+      ...renderOptions(job),
+      format: job.format,
+      style: job.caption_style,
+    });
+    if (!subtitle)
+      throw new Error(`Não há legenda sincronizada para o corte ${index + 1}.`);
     writeFileSync(subtitlePath, subtitle, { encoding: "utf8", mode: 0o640 });
     const focusSamples = await detectFocusSamples(db, job, sourcePath, clip);
     await runCommand(db, job.id, ffmpegPath, [
-      "-y", "-hide_banner", "-loglevel", "error", "-ss", String(clip.startSeconds),
-      "-t", String(clip.durationSeconds), "-i", sourcePath, "-filter_complex", videoFilter(job, subtitlePath, focusSamples),
-      "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-      "-pix_fmt", "yuv420p", "-threads", String(ffmpegThreads), "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart", "-shortest", videoPath,
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      String(clip.startSeconds),
+      "-t",
+      String(clip.durationSeconds),
+      "-i",
+      sourcePath,
+      "-filter_complex",
+      videoFilter(job, subtitlePath, focusSamples),
+      "-map",
+      "[v]",
+      "-map",
+      "0:a?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "22",
+      "-pix_fmt",
+      "yuv420p",
+      "-threads",
+      String(ffmpegThreads),
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      "-shortest",
+      videoPath,
     ]);
-    await runCommand(db, job.id, ffmpegPath, [
-      "-y", "-hide_banner", "-loglevel", "error", "-ss", "0.8", "-i", videoPath,
-      "-frames:v", "1", "-q:v", "3", posterPath,
-    ], { timeout: 10 * 60_000 });
-    if (!existsSync(videoPath) || statSync(videoPath).size < 10_000) throw new Error(`O corte ${index + 1} não foi renderizado corretamente.`);
+    await runCommand(
+      db,
+      job.id,
+      ffmpegPath,
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        "0.8",
+        "-i",
+        videoPath,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "3",
+        posterPath,
+      ],
+      { timeout: 10 * 60_000 },
+    );
+    if (!existsSync(videoPath) || statSync(videoPath).size < 10_000)
+      throw new Error(`O corte ${index + 1} não foi renderizado corretamente.`);
     output.push({
       ...clip,
       id: randomBytes(16).toString("hex"),
@@ -552,21 +1001,39 @@ async function renderClips(db, job, sourcePath, segments, clips, stagingDirector
 
 function completeProject(db, job, rendered, stagingDirectory) {
   const finalDirectory = resolve(clipsRoot, job.user_id, job.id);
-  if (!finalDirectory.startsWith(clipsRoot + sep)) throw new Error("Diretório final inválido.");
+  if (!finalDirectory.startsWith(clipsRoot + sep))
+    throw new Error("Diretório final inválido.");
   rmSync(finalDirectory, { recursive: true, force: true });
   mkdirSync(dirname(finalDirectory), { recursive: true, mode: 0o750 });
   renameSync(stagingDirectory, finalDirectory);
-  const credits = Math.max(1, Math.ceil(Number(job.analysis_seconds || job.requested_analysis_minutes * 60) / 60));
+  const credits = Math.max(
+    1,
+    Math.ceil(
+      Number(job.analysis_seconds || job.requested_analysis_minutes * 60) / 60,
+    ),
+  );
 
   db.exec("BEGIN IMMEDIATE");
   try {
-    const project = db.prepare("SELECT status, cancel_requested FROM projects WHERE id = ? LIMIT 1").get(job.id);
-    if (!project || Number(project.cancel_requested) === 1 || project.status === "cancelled") {
+    const project = db
+      .prepare(
+        "SELECT status, cancel_requested FROM projects WHERE id = ? LIMIT 1",
+      )
+      .get(job.id);
+    if (
+      !project ||
+      Number(project.cancel_requested) === 1 ||
+      project.status === "cancelled"
+    ) {
       throw new CancelledError("Cancelado pelo usuário.");
     }
-    const user = db.prepare("SELECT credits, status FROM users WHERE id = ? LIMIT 1").get(job.user_id);
-    if (!user || user.status !== "active") throw new Error("A conta não está ativa.");
-    if (Number(user.credits) < credits) throw new Error("Saldo insuficiente no momento da conclusão.");
+    const user = db
+      .prepare("SELECT credits, status FROM users WHERE id = ? LIMIT 1")
+      .get(job.user_id);
+    if (!user || user.status !== "active")
+      throw new Error("A conta não está ativa.");
+    if (Number(user.credits) < credits)
+      throw new Error("Saldo insuficiente no momento da conclusão.");
     db.prepare("DELETE FROM clips WHERE project_id = ?").run(job.id);
     const insert = db.prepare(`
       INSERT INTO clips (id, project_id, user_id, title, hook, caption, start_ms, end_ms, duration_ms, score, file_name, poster_file_name, created_at)
@@ -575,18 +1042,40 @@ function completeProject(db, job, rendered, stagingDirectory) {
     const now = Date.now();
     for (const clip of rendered) {
       insert.run(
-        clip.id, job.id, job.user_id, clip.title, clip.hook, clip.caption,
-        Math.round(clip.startSeconds * 1000), Math.round(clip.endSeconds * 1000), Math.round(clip.durationSeconds * 1000),
-        clip.score, clip.fileName, clip.posterFileName, now,
+        clip.id,
+        job.id,
+        job.user_id,
+        clip.title,
+        clip.hook,
+        clip.caption,
+        Math.round(clip.startSeconds * 1000),
+        Math.round(clip.endSeconds * 1000),
+        Math.round(clip.durationSeconds * 1000),
+        clip.score,
+        clip.fileName,
+        clip.posterFileName,
+        now,
       );
     }
-    db.prepare("UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ?").run(credits, now, job.user_id);
-    db.prepare("INSERT INTO credit_history (id,user_id,admin_id,amount,balance_after,reason,created_at) VALUES (?,?,NULL,?,?,?,?)")
-      .run(randomBytes(16).toString("hex"), job.user_id, -credits, Number(user.credits) - credits, `Processamento: ${job.title}`, now);
-    db.prepare(`
+    db.prepare(
+      "UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ?",
+    ).run(credits, now, job.user_id);
+    db.prepare(
+      "INSERT INTO credit_history (id,user_id,admin_id,amount,balance_after,reason,created_at) VALUES (?,?,NULL,?,?,?,?)",
+    ).run(
+      randomBytes(16).toString("hex"),
+      job.user_id,
+      -credits,
+      Number(user.credits) - credits,
+      `Processamento: ${job.title}`,
+      now,
+    );
+    db.prepare(
+      `
       UPDATE projects SET status = 'ready', stage = 'Cortes prontos', progress = 100, credits_charged = ?,
         error_message = NULL, updated_at = ?, completed_at = ? WHERE id = ?
-    `).run(credits, now, now, job.id);
+    `,
+    ).run(credits, now, now, job.id);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -596,11 +1085,23 @@ function completeProject(db, job, rendered, stagingDirectory) {
 }
 
 function publicError(error) {
-  const value = cleanText(error instanceof Error ? error.message : String(error), "Falha inesperada no processamento.", 800);
-  if (/OPENAI_API_KEY|Bearer\s+[A-Za-z0-9_-]+/i.test(value)) return "A integração com a OpenAI não está configurada corretamente.";
-  if (/OpenAI \(429\)|no credits remaining|insufficient_quota|billing/i.test(value)) return "A conta da OpenAI está sem saldo disponível. Adicione créditos na API e use Reprocessar neste projeto.";
-  if (/HTTP (Error )?403|403 Forbidden/i.test(value)) return "O YouTube recusou temporariamente o download. Atualize o yt-dlp ou tente reprocessar mais tarde.";
-  if (/ENOENT/.test(value)) return "Uma ferramenta de processamento não foi encontrada no servidor.";
+  const value = cleanText(
+    error instanceof Error ? error.message : String(error),
+    "Falha inesperada no processamento.",
+    800,
+  );
+  if (/OPENAI_API_KEY|Bearer\s+[A-Za-z0-9_-]+/i.test(value))
+    return "A integração com a OpenAI não está configurada corretamente.";
+  if (
+    /OpenAI \(429\)|no credits remaining|insufficient_quota|billing/i.test(
+      value,
+    )
+  )
+    return "A conta da OpenAI está sem saldo disponível. Adicione créditos na API e use Reprocessar neste projeto.";
+  if (/HTTP (Error )?403|403 Forbidden/i.test(value))
+    return "O YouTube recusou temporariamente o download. Atualize o yt-dlp ou tente reprocessar mais tarde.";
+  if (/ENOENT/.test(value))
+    return "Uma ferramenta de processamento não foi encontrada no servidor.";
   return value;
 }
 
@@ -608,7 +1109,10 @@ async function processJob(db, claimed) {
   const workDirectory = resolve(workRoot, claimed.id);
   const stagingDirectory = join(workDirectory, "resultado");
   const finalDirectory = resolve(clipsRoot, claimed.user_id, claimed.id);
-  if (!workDirectory.startsWith(workRoot + sep) || !finalDirectory.startsWith(clipsRoot + sep)) {
+  if (
+    !workDirectory.startsWith(workRoot + sep) ||
+    !finalDirectory.startsWith(clipsRoot + sep)
+  ) {
     throw new Error("Identificador de projeto inválido.");
   }
   rmSync(workDirectory, { recursive: true, force: true });
@@ -619,26 +1123,67 @@ async function processJob(db, claimed) {
     const filesystem = statfsSync(mediaRoot);
     const freeBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
     if (freeBytes < minimumFreeGigabytes * 1024 ** 3) {
-      throw new Error(`Espaço insuficiente no disco. Libere pelo menos ${minimumFreeGigabytes} GB para iniciar um vídeo.`);
+      throw new Error(
+        `Espaço insuficiente no disco. Libere pelo menos ${minimumFreeGigabytes} GB para iniciar um vídeo.`,
+      );
     }
     const metadata = await inspectSource(db, claimed);
-    const actualJob = { ...claimed, title: metadata.title, analysis_seconds: metadata.analysisSeconds };
+    const actualJob = {
+      ...claimed,
+      title: metadata.title,
+      analysis_seconds: metadata.analysisSeconds,
+    };
     const requiredCredits = Math.ceil(metadata.analysisSeconds / 60);
-    if (Number(claimed.user_credits) < requiredCredits) throw new Error(`Saldo insuficiente: este vídeo exige ${requiredCredits} créditos.`);
+    if (Number(claimed.user_credits) < requiredCredits)
+      throw new Error(
+        `Saldo insuficiente: este vídeo exige ${requiredCredits} créditos.`,
+      );
     if (Number(claimed.user_monthly_credit_limit) > 0) {
       const monthStart = new Date();
       monthStart.setUTCDate(1);
       monthStart.setUTCHours(0, 0, 0, 0);
-      const usage = db.prepare("SELECT COALESCE(SUM(-amount), 0) used FROM credit_history WHERE user_id = ? AND amount < 0 AND created_at >= ?").get(claimed.user_id, monthStart.getTime());
-      if (Number(usage?.used || 0) + requiredCredits > Number(claimed.user_monthly_credit_limit)) {
-        throw new Error(`Limite mensal de ${claimed.user_monthly_credit_limit} créditos atingido.`);
+      const usage = db
+        .prepare(
+          "SELECT COALESCE(SUM(-amount), 0) used FROM credit_history WHERE user_id = ? AND amount < 0 AND created_at >= ?",
+        )
+        .get(claimed.user_id, monthStart.getTime());
+      if (
+        Number(usage?.used || 0) + requiredCredits >
+        Number(claimed.user_monthly_credit_limit)
+      ) {
+        throw new Error(
+          `Limite mensal de ${claimed.user_monthly_credit_limit} créditos atingido.`,
+        );
       }
     }
-    const sourcePath = await downloadSource(db, actualJob, metadata, workDirectory);
-    const audioFiles = await extractAudio(db, actualJob, sourcePath, workDirectory, metadata.analysisSeconds);
+    const sourcePath = await downloadSource(
+      db,
+      actualJob,
+      metadata,
+      workDirectory,
+    );
+    const audioFiles = await extractAudio(
+      db,
+      actualJob,
+      sourcePath,
+      workDirectory,
+      metadata.analysisSeconds,
+    );
     const segments = await transcribe(db, actualJob, audioFiles);
-    const selected = await selectClips(db, actualJob, segments, metadata.analysisSeconds);
-    const rendered = await renderClips(db, actualJob, sourcePath, segments, selected, stagingDirectory);
+    const selected = await selectClips(
+      db,
+      actualJob,
+      segments,
+      metadata.analysisSeconds,
+    );
+    const rendered = await renderClips(
+      db,
+      actualJob,
+      sourcePath,
+      segments,
+      selected,
+      stagingDirectory,
+    );
     assertContinuing(db, actualJob.id);
     completeProject(db, actualJob, rendered, stagingDirectory);
     log("Projeto concluído:", `${actualJob.id} (${rendered.length} cortes)`);
@@ -646,16 +1191,33 @@ async function processJob(db, claimed) {
     rmSync(finalDirectory, { recursive: true, force: true });
     const now = Date.now();
     if (error instanceof ShutdownError) {
-      updateProject(db, claimed.id, "queued", "Aguardando reinício do processador", 1, { started_at: null });
+      updateProject(
+        db,
+        claimed.id,
+        "queued",
+        "Aguardando reinício do processador",
+        1,
+        { started_at: null },
+      );
       log("Projeto devolvido à fila:", claimed.id);
     } else if (error instanceof CancelledError) {
-      updateProject(db, claimed.id, "cancelled", "Cancelado pelo usuário", 0, { completed_at: now, cancel_requested: 1 });
+      updateProject(db, claimed.id, "cancelled", "Cancelado pelo usuário", 0, {
+        completed_at: now,
+        cancel_requested: 1,
+      });
       log("Projeto cancelado:", claimed.id);
     } else {
       const message = publicError(error);
-      updateProject(db, claimed.id, "failed", "Falha no processamento", 0, { error_message: message, completed_at: now });
+      updateProject(db, claimed.id, "failed", "Falha no processamento", 0, {
+        error_message: message,
+        completed_at: now,
+      });
       log("Projeto falhou:", `${claimed.id} ${message}`);
-      processorState(db, "last_error", JSON.stringify({ projectId: claimed.id, message, at: now }));
+      processorState(
+        db,
+        "last_error",
+        JSON.stringify({ projectId: claimed.id, message, at: now }),
+      );
     }
   } finally {
     rmSync(workDirectory, { recursive: true, force: true });
@@ -664,18 +1226,30 @@ async function processJob(db, claimed) {
 
 async function checkCommand(command, args) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], shell: false });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
     let output = "";
-    child.stdout.on("data", (chunk) => { output += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolvePromise(output) : reject(new Error(`${command} retornou ${code}`)));
+    child.on("close", (code) =>
+      code === 0
+        ? resolvePromise(output)
+        : reject(new Error(`${command} retornou ${code}`)),
+    );
   });
 }
 
 async function checkConfiguration() {
   const failures = [];
-  if (!processorEnabled) failures.push("STORMCAST_PROCESSOR_ENABLED precisa ser 1");
+  if (!processorEnabled)
+    failures.push("STORMCAST_PROCESSOR_ENABLED precisa ser 1");
   if (!openAiKey) failures.push("OPENAI_API_KEY não foi definida");
   mkdirSync(workRoot, { recursive: true, mode: 0o750 });
   mkdirSync(clipsRoot, { recursive: true, mode: 0o750 });
@@ -685,17 +1259,48 @@ async function checkConfiguration() {
   let ytVersion = "indisponível";
   let ffmpegVersion = "indisponível";
   let faceTracking = "fallback central";
-  try { ytVersion = cleanText(await checkCommand(ytDlpPath, ["--version"]), "indisponível", 80); } catch { failures.push(`yt-dlp não encontrado em ${ytDlpPath}`); }
   try {
-    ffmpegVersion = cleanText((await checkCommand(ffmpegPath, ["-version"])).split(/\r?\n/)[0], "indisponível", 120);
-    const filters = await checkCommand(ffmpegPath, ["-hide_banner", "-filters"]);
-    if (!/\bsubtitles\b/.test(filters)) failures.push("FFmpeg foi instalado sem o filtro subtitles/libass");
-  } catch { failures.push(`FFmpeg não encontrado em ${ffmpegPath}`); }
-  try { await checkCommand(ffprobePath, ["-version"]); } catch { failures.push(`ffprobe não encontrado em ${ffprobePath}`); }
+    ytVersion = cleanText(
+      await checkCommand(ytDlpPath, ["--version"]),
+      "indisponível",
+      80,
+    );
+  } catch {
+    failures.push(`yt-dlp não encontrado em ${ytDlpPath}`);
+  }
   try {
-    const cvVersion = cleanText(await checkCommand(pythonPath, ["-c", "import cv2; print(cv2.__version__)"]), "ativo", 40);
+    ffmpegVersion = cleanText(
+      (await checkCommand(ffmpegPath, ["-version"])).split(/\r?\n/)[0],
+      "indisponível",
+      120,
+    );
+    const filters = await checkCommand(ffmpegPath, [
+      "-hide_banner",
+      "-filters",
+    ]);
+    if (!/\bsubtitles\b/.test(filters))
+      failures.push("FFmpeg foi instalado sem o filtro subtitles/libass");
+  } catch {
+    failures.push(`FFmpeg não encontrado em ${ffmpegPath}`);
+  }
+  try {
+    await checkCommand(ffprobePath, ["-version"]);
+  } catch {
+    failures.push(`ffprobe não encontrado em ${ffprobePath}`);
+  }
+  try {
+    const cvVersion = cleanText(
+      await checkCommand(pythonPath, [
+        "-c",
+        "import cv2; print(cv2.__version__)",
+      ]),
+      "ativo",
+      40,
+    );
     faceTracking = `OpenCV ${cvVersion}`;
-  } catch { /* Optional: automatic framing safely falls back to the center. */ }
+  } catch {
+    /* Optional: automatic framing safely falls back to the center. */
+  }
 
   log("Banco:", databasePath);
   log("Mídia:", mediaRoot);
@@ -704,8 +1309,16 @@ async function checkConfiguration() {
   log("Enquadramento facial:", faceTracking);
   log("Modelos:", `${transcriptionModel} + ${analysisModel}`);
   const filesystem = statfsSync(mediaRoot);
-  log("Disco livre:", `${(Number(filesystem.bavail) * Number(filesystem.bsize) / 1024 ** 3).toFixed(1)} GB (mínimo ${minimumFreeGigabytes} GB)`);
-  log("OpenAI:", openAiKey ? `configurada (${createHash("sha256").update(openAiKey).digest("hex").slice(0, 8)})` : "não configurada");
+  log(
+    "Disco livre:",
+    `${((Number(filesystem.bavail) * Number(filesystem.bsize)) / 1024 ** 3).toFixed(1)} GB (mínimo ${minimumFreeGigabytes} GB)`,
+  );
+  log(
+    "OpenAI:",
+    openAiKey
+      ? `configurada (${createHash("sha256").update(openAiKey).digest("hex").slice(0, 8)})`
+      : "não configurada",
+  );
   if (failures.length) {
     for (const failure of failures) log("ERRO:", failure);
     process.exitCode = 1;
@@ -716,16 +1329,23 @@ async function checkConfiguration() {
 
 function recoverInterrupted(db) {
   const now = Date.now();
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE projects SET status = 'queued', stage = 'Retomando após reinício', progress = 1,
       error_message = NULL, started_at = NULL, updated_at = ?
     WHERE status IN ('downloading', 'transcribing', 'analyzing', 'rendering')
-  `).run(now);
-  if (Number(result.changes)) log("Projetos recuperados:", String(result.changes));
+  `,
+    )
+    .run(now);
+  if (Number(result.changes))
+    log("Projetos recuperados:", String(result.changes));
 }
 
 function sleep(milliseconds) {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+  return new Promise((resolvePromise) =>
+    setTimeout(resolvePromise, milliseconds),
+  );
 }
 
 async function main() {
@@ -733,8 +1353,12 @@ async function main() {
     await checkConfiguration();
     return;
   }
-  if (!processorEnabled) throw new Error("Defina STORMCAST_PROCESSOR_ENABLED=1 antes de iniciar o worker.");
-  if (!openAiKey) throw new Error("Defina OPENAI_API_KEY antes de iniciar o worker.");
+  if (!processorEnabled)
+    throw new Error(
+      "Defina STORMCAST_PROCESSOR_ENABLED=1 antes de iniciar o worker.",
+    );
+  if (!openAiKey)
+    throw new Error("Defina OPENAI_API_KEY antes de iniciar o worker.");
   mkdirSync(workRoot, { recursive: true, mode: 0o750 });
   mkdirSync(clipsRoot, { recursive: true, mode: 0o750 });
   const db = openDatabase();
