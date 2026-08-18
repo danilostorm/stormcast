@@ -368,12 +368,14 @@ export async function DELETE(request: Request) {
           runtimeValue("STORMCAST_MEDIA_DIR") ||
             path.resolve(process.cwd(), ".data/media"),
         );
-        const target = path.resolve(mediaRoot, "clips", userId);
-        if (target.startsWith(mediaRoot + path.sep)) {
-          try {
-            fs.rmSync(target, { recursive: true, force: true });
-          } catch {
-            /* The account is removed; periodic cleanup can retry the files. */
+        for (const directory of ["clips", "transcripts"]) {
+          const target = path.resolve(mediaRoot, directory, userId);
+          if (target.startsWith(mediaRoot + path.sep)) {
+            try {
+              fs.rmSync(target, { recursive: true, force: true });
+            } catch {
+              /* The account is removed; periodic cleanup can retry the files. */
+            }
           }
         }
       }

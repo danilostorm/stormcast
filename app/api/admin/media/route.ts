@@ -107,7 +107,9 @@ export async function GET(request: Request) {
       supported: true,
       users: usage,
       totalBytes: usage.reduce((sum, user) => sum + user.bytes, 0),
-      tempBytes: bytes(io.fs, io.path.resolve(media, "work")),
+      tempBytes:
+        bytes(io.fs, io.path.resolve(media, "work")) +
+        bytes(io.fs, io.path.resolve(media, "transcripts")),
       disk,
       mediaDirectory: media,
       retentionDays: Number(retention?.value || 30),
@@ -233,17 +235,21 @@ export async function POST(request: Request) {
       [cutoff],
     );
     for (const project of old) {
-      const target = io.path.resolve(
-        media,
-        "clips",
-        project.user_id,
-        project.id,
-      );
-      if (target.startsWith(media + io.path.sep)) {
-        try {
-          io.fs.rmSync(target, { recursive: true, force: true });
-          removed++;
-        } catch {}
+      for (const target of [
+        io.path.resolve(media, "clips", project.user_id, project.id),
+        io.path.resolve(
+          media,
+          "transcripts",
+          project.user_id,
+          `${project.id}.json`,
+        ),
+      ]) {
+        if (target.startsWith(media + io.path.sep)) {
+          try {
+            io.fs.rmSync(target, { recursive: true, force: true });
+            removed++;
+          } catch {}
+        }
       }
     }
     await auditAdmin(admin.id, "media.cleanup", "system", null, {
