@@ -33,7 +33,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
       });
       const data = await response.json() as { error?: string; user?: { role?: string } };
       if (!response.ok) throw new Error(data.error || "Não foi possível continuar.");
-      window.location.assign(data.user?.role === "admin" ? "/admin" : "/app");
+      window.location.assign(data.user?.forcePasswordChange ? "/trocar-senha" : data.user?.role === "admin" ? "/admin" : "/app");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível continuar.");
       setLoading(false);

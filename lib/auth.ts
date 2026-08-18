@@ -14,6 +14,10 @@ export type AuthUser = {
   credits: number;
   createdAt: number;
   lastLoginAt: number | null;
+  forcePasswordChange: boolean;
+  plan: string;
+  monthlyCreditLimit: number;
+  maxActiveProjects: number;
 };
 
 type UserRow = {
@@ -26,6 +30,10 @@ type UserRow = {
   credits: number;
   created_at: number;
   last_login_at: number | null;
+  force_password_change: number;
+  plan: string;
+  monthly_credit_limit: number;
+  max_active_projects: number;
 };
 
 type SessionUserRow = UserRow & { expires_at: number };
@@ -45,6 +53,10 @@ function publicUser(row: UserRow): AuthUser {
     credits: Number(row.credits),
     createdAt: Number(row.created_at),
     lastLoginAt: row.last_login_at ? Number(row.last_login_at) : null,
+    forcePasswordChange: Boolean(row.force_password_change),
+    plan: row.plan || "free",
+    monthlyCreditLimit: Number(row.monthly_credit_limit || 120),
+    maxActiveProjects: Number(row.max_active_projects || 1),
   };
 }
 
@@ -113,6 +125,9 @@ export async function getCurrentUser() {
 export async function requireUser(returnTo = "/app") {
   const user = await getCurrentUser();
   if (!user) redirect(`/login?next=${encodeURIComponent(returnTo)}`);
+  if (user.forcePasswordChange && returnTo !== "/trocar-senha") redirect("/trocar-senha");
+  const maintenance = await queryOne<{ value: string }>("SELECT value FROM app_settings WHERE key='maintenance_mode' LIMIT 1");
+  if (maintenance?.value === "1" && user.role !== "admin") redirect("/?maintenance=1");
   return user;
 }
 

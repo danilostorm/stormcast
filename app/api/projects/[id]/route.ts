@@ -3,6 +3,7 @@ import { execute, queryOne, runtimeValue } from "../../../../lib/database";
 import { getProject } from "../../../../lib/projects";
 import { randomToken } from "../../../../lib/security";
 import { processorConfigured } from "../../../../lib/youtube";
+import { captionStyleIds, framingIds, normalizeRenderOptions, type FramingId } from "../../../../lib/render-options";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -16,9 +17,10 @@ type ProjectRow = {
   requested_analysis_minutes: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
-  framing: "auto" | "fit" | "center" | "split" | "spotlight";
+  framing: FramingId;
   prompt: string;
   caption_style: string;
+  render_options: string;
   thumbnail_url: string | null;
   status: string;
 };
@@ -31,6 +33,7 @@ type ProjectActionBody = {
   framing?: unknown;
   prompt?: unknown;
   captionStyle?: unknown;
+  renderOptions?: unknown;
 };
 
 function cleanText(value: unknown, maximum: number) {
@@ -48,13 +51,14 @@ function normalizedSettings(row: ProjectRow, body: ProjectActionBody) {
     analysisMinutes,
     clipDuration: [30, 60, 90, 180].includes(clipDuration) ? clipDuration : 60,
     format: body.action === "update_and_retry" && body.format === "16:9" ? "16:9" : body.action === "update_and_retry" ? "9:16" : row.format,
-    framing: body.action === "update_and_retry" && ["auto", "fit", "center", "split", "spotlight"].includes(String(body.framing))
+    framing: body.action === "update_and_retry" && framingIds.includes(String(body.framing) as FramingId)
       ? String(body.framing)
       : body.action === "update_and_retry" ? "auto" : row.framing,
     prompt: body.action === "update_and_retry" ? cleanText(body.prompt, 520) : row.prompt,
-    captionStyle: body.action === "update_and_retry" && ["impact", "clean", "viral", "neon", "focus", "editorial", "gospel", "news", "gaming", "box", "minimal", "punch"].includes(String(body.captionStyle))
+    captionStyle: body.action === "update_and_retry" && captionStyleIds.includes(String(body.captionStyle) as typeof captionStyleIds[number])
       ? String(body.captionStyle)
       : row.caption_style,
+    renderOptions: body.action === "update_and_retry" ? JSON.stringify(normalizeRenderOptions(body.renderOptions)) : row.render_options,
   };
 }
 
@@ -81,7 +85,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const row = await queryOne<ProjectRow>(
       `SELECT id, user_id, title, source_url, source_video_id, source_duration_seconds,
         requested_analysis_minutes, requested_clip_seconds, format, framing, prompt,
-        caption_style, thumbnail_url, status
+        caption_style, render_options, thumbnail_url, status
        FROM projects WHERE id = ? AND user_id = ? LIMIT 1`,
       [id, user.id],
     );
@@ -102,6 +106,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (user.credits < settings.analysisMinutes) {
       return Response.json({ error: `Saldo insuficiente. Este processamento exige até ${settings.analysisMinutes} créditos.` }, { status: 402 });
     }
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const monthlyUsage = await queryOne<{ used: number }>(
+      "SELECT COALESCE(SUM(-amount), 0) used FROM credit_history WHERE user_id = ? AND amount < 0 AND created_at >= ?",
+      [user.id, monthStart.getTime()],
+    );
+    if (user.monthlyCreditLimit > 0 && Number(monthlyUsage?.used || 0) + settings.analysisMinutes > user.monthlyCreditLimit) {
+      return Response.json({ error: `Seu limite mensal de ${user.monthlyCreditLimit} créditos seria ultrapassado.` }, { status: 402 });
+    }
     const now = Date.now();
 
     if (body.action === "duplicate") {
@@ -109,12 +123,12 @@ export async function PATCH(request: Request, context: RouteContext) {
       await execute(
         `INSERT INTO projects (
           id, user_id, title, source_url, source_platform, source_video_id, source_duration_seconds,
-          requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style,
+          requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style, render_options,
           thumbnail_url, status, stage, progress, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
         [newId, user.id, row.title, row.source_url, row.source_video_id, row.source_duration_seconds,
           settings.analysisMinutes, settings.clipDuration, settings.format, settings.framing, settings.prompt,
-          settings.captionStyle, row.thumbnail_url, now, now],
+          settings.captionStyle, settings.renderOptions, row.thumbnail_url, now, now],
       );
       return Response.json({ project: await getProject(user.id, newId), duplicated: true }, { status: 201 });
     }
@@ -122,11 +136,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     await execute("DELETE FROM clips WHERE project_id = ? AND user_id = ?", [id, user.id]);
     await execute(
       `UPDATE projects SET requested_analysis_minutes = ?, analysis_seconds = 0, requested_clip_seconds = ?,
-        format = ?, framing = ?, prompt = ?, caption_style = ?, status = 'queued', stage = 'Aguardando processador',
+        format = ?, framing = ?, prompt = ?, caption_style = ?, render_options = ?, status = 'queued', stage = 'Aguardando processador',
         progress = 1, error_message = NULL, cancel_requested = 0, credits_charged = 0,
         started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?`,
       [settings.analysisMinutes, settings.clipDuration, settings.format, settings.framing, settings.prompt,
-        settings.captionStyle, now, id, user.id],
+        settings.captionStyle, settings.renderOptions, now, id, user.id],
     );
     return Response.json({ project: await getProject(user.id, id), retried: true });
   } catch (error) {

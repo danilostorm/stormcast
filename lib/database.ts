@@ -67,7 +67,11 @@ const schemaStatements = [
     credits INTEGER NOT NULL DEFAULT 120,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    last_login_at INTEGER
+    last_login_at INTEGER,
+    force_password_change INTEGER NOT NULL DEFAULT 0,
+    plan TEXT NOT NULL DEFAULT 'free',
+    monthly_credit_limit INTEGER NOT NULL DEFAULT 120,
+    max_active_projects INTEGER NOT NULL DEFAULT 1
   )`,
   `CREATE INDEX IF NOT EXISTS users_email_idx ON users (email)`,
   `CREATE INDEX IF NOT EXISTS users_role_idx ON users (role)`,
@@ -95,6 +99,7 @@ const schemaStatements = [
     framing TEXT NOT NULL DEFAULT 'auto',
     prompt TEXT NOT NULL DEFAULT '',
     caption_style TEXT NOT NULL DEFAULT 'impact',
+    render_options TEXT NOT NULL DEFAULT '{}',
     thumbnail_url TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
     stage TEXT NOT NULL DEFAULT 'Aguardando processador',
@@ -135,6 +140,30 @@ const schemaStatements = [
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS credit_history (
+    id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, admin_id TEXT, amount INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS credit_history_user_idx ON credit_history (user_id)`,
+  `CREATE INDEX IF NOT EXISTS credit_history_created_idx ON credit_history (created_at)`,
+  `CREATE TABLE IF NOT EXISTS admin_audit (
+    id TEXT PRIMARY KEY NOT NULL, admin_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL,
+    target_id TEXT, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL,
+    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit (created_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_admin_idx ON admin_audit (admin_id)`,
+  `CREATE TABLE IF NOT EXISTS processor_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+];
+
+const schemaAlterStatements = [
+  "ALTER TABLE users ADD COLUMN force_password_change INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'",
+  "ALTER TABLE users ADD COLUMN monthly_credit_limit INTEGER NOT NULL DEFAULT 120",
+  "ALTER TABLE users ADD COLUMN max_active_projects INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE projects ADD COLUMN render_options TEXT NOT NULL DEFAULT '{}'",
 ];
 
 function cloudflareDatabase() {
@@ -183,11 +212,17 @@ export async function ensureSchema() {
     const d1 = cloudflareDatabase();
     if (d1) {
       await d1.batch(schemaStatements.map((statement) => d1.prepare(statement)));
+      for (const statement of schemaAlterStatements) {
+        try { await d1.prepare(statement).run(); } catch { /* Existing installations already have the column. */ }
+      }
       return;
     }
 
     const db = nodeDatabase();
     for (const statement of schemaStatements) db.prepare(statement).run();
+    for (const statement of schemaAlterStatements) {
+      try { db.prepare(statement).run(); } catch { /* Existing installations already have the column. */ }
+    }
   })();
 
   return globalThis.__STORMCAST_SCHEMA_READY__;

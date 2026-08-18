@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildAss,
   buildSrt,
   formatSrtTime,
   focusCropExpression,
@@ -39,6 +40,35 @@ test("gera SRT relativo ao início do corte", () => {
   assert.match(srt, /Primeira frase do trecho/);
   assert.equal(formatSrtTime(3661.123), "01:01:01,123");
   assert.match(transcriptForAnalysis(segments), /^\[10\.00-12\.50\]/);
+});
+
+test("gera ASS com timestamps por palavra, estilo e área segura", () => {
+  const ass = buildAss([{
+    start: 10,
+    end: 12,
+    text: "é uma frase forte",
+    words: [
+      { word: "é", start: 10, end: 10.2 },
+      { word: "uma", start: 10.2, end: 10.6 },
+      { word: "frase", start: 10.6, end: 11.2 },
+      { word: "forte", start: 11.2, end: 12 },
+    ],
+  }], 10, 12, {
+    format: "9:16",
+    captionFont: "Montserrat",
+    captionSize: 62,
+    highlightColor: "#ffcc00",
+    safeArea: "tiktok",
+    wordsPerBlock: 4,
+    animation: "pop",
+    removeFillers: true,
+  });
+  assert.match(ass, /PlayResX: 1080/);
+  assert.match(ass, /Style: StormCast,Montserrat,62/);
+  assert.match(ass, /\\k40.*uma/);
+  assert.doesNotMatch(ass, /\}é\{/);
+  assert.match(ass, /MarginV,Encoding/);
+  assert.match(ass, /,380,1/);
 });
 
 test("rejeita cortes inválidos e sobrepostos", () => {

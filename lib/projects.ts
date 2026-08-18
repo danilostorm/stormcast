@@ -1,4 +1,5 @@
 import { queryAll, queryOne } from "./database";
+import { normalizeRenderOptions, type RenderOptions, type FramingId } from "./render-options";
 
 export type ProjectStatus = "queued" | "downloading" | "transcribing" | "analyzing" | "rendering" | "ready" | "failed" | "cancelled";
 
@@ -14,9 +15,10 @@ type ProjectRow = {
   analysis_seconds: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
-  framing: "auto" | "fit" | "center" | "split" | "spotlight";
+  framing: FramingId;
   prompt: string;
   caption_style: string;
+  render_options: string;
   thumbnail_url: string | null;
   status: ProjectStatus;
   stage: string;
@@ -66,9 +68,10 @@ export type PublicProject = {
   analysisSeconds: number;
   requestedClipSeconds: number;
   format: "9:16" | "16:9";
-  framing: "auto" | "fit" | "center" | "split" | "spotlight";
+  framing: FramingId;
   prompt: string;
   captionStyle: string;
+  renderOptions: RenderOptions;
   thumbnailUrl: string | null;
   status: ProjectStatus;
   stage: string;
@@ -112,6 +115,7 @@ function publicProject(row: ProjectRow, clips: ClipRow[]): PublicProject {
     framing: row.framing,
     prompt: row.prompt,
     captionStyle: row.caption_style,
+    renderOptions: normalizeRenderOptions(row.render_options),
     thumbnailUrl: row.thumbnail_url,
     status: row.status,
     stage: row.stage,
@@ -127,7 +131,7 @@ function publicProject(row: ProjectRow, clips: ClipRow[]): PublicProject {
 
 const projectColumns = `id, user_id, title, source_url, source_platform, source_video_id,
   source_duration_seconds, requested_analysis_minutes, analysis_seconds, requested_clip_seconds,
-  format, framing, prompt, caption_style, thumbnail_url, status, stage, progress, error_message,
+  format, framing, prompt, caption_style, render_options, thumbnail_url, status, stage, progress, error_message,
   credits_charged, created_at, updated_at, started_at, completed_at`;
 
 const clipColumns = `id, project_id, title, hook, caption, start_ms, end_ms, duration_ms, score`;

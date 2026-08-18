@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  buildSrt,
+  buildAss,
   cleanText,
   clipSelectionSchema,
   desiredClipCount,
@@ -47,6 +47,46 @@ function integerEnv(name, fallback, minimum, maximum) {
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.floor(parsed))) : fallback;
 }
 
+function renderOptions(job) {
+  let value = {};
+  try { value = JSON.parse(job.render_options || "{}"); } catch { value = {}; }
+  const presets = {
+    impact: { highlightColor: "#ffd700", textCase: "upper", captionSize: 62, animation: "pop" },
+    karaoke: { highlightColor: "#b8ff59", captionSize: 58, animation: "pop" },
+    clean: { primaryColor: "#ffffff", highlightColor: "#ffffff", captionSize: 48, animation: "fade" },
+    bold: { primaryColor: "#ffffff", highlightColor: "#ffd84d", captionSize: 64, outline: 5, textCase: "upper" },
+    box: { primaryColor: "#111111", highlightColor: "#7c3cff", captionSize: 54 },
+    keyword: { highlightColor: "#ff4f87", captionSize: 58 },
+    minimal: { primaryColor: "#ffffff", highlightColor: "#ffffff", captionSize: 42, outline: 1, animation: "fade" },
+    neon: { primaryColor: "#6cf3ff", highlightColor: "#ff5ee7", captionSize: 58, animation: "bounce" },
+    podcast: { primaryColor: "#ffffff", highlightColor: "#b8ff59", captionSize: 50, captionPosition: "bottom" },
+    cinematic: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#d8c19f", captionSize: 46, animation: "fade" },
+    gospel: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#ffe259", captionSize: 58, textCase: "upper" },
+    reels: { primaryColor: "#ffffff", highlightColor: "#ff4fc4", captionSize: 60, animation: "pop" },
+    twolines: { primaryColor: "#ffffff", highlightColor: "#ffd700", captionSize: 52, wordsPerBlock: 8 },
+    lower: { primaryColor: "#ffffff", highlightColor: "#b8ff59", captionSize: 44, captionPosition: "bottom" },
+    title: { captionFont: "DejaVu Serif", primaryColor: "#ffffff", highlightColor: "#ffd700", captionSize: 50, captionPosition: "top" },
+  };
+  const preset = job.caption_style === "brand" ? {} : (presets[job.caption_style] || presets.impact);
+  return {
+    manualPosition: Math.max(-1, Math.min(1, Number(value.manualPosition) || 0)),
+    blurStrength: Math.max(0, Math.min(50, Number(value.blurStrength) || 20)),
+    safeArea: ["shorts", "reels", "tiktok"].includes(value.safeArea) ? value.safeArea : "shorts",
+    captionFont: cleanText(preset.captionFont || value.captionFont, "DejaVu Sans", 80),
+    captionSize: Math.max(28, Math.min(96, Number(preset.captionSize || value.captionSize) || 54)),
+    captionPosition: ["top", "middle", "bottom"].includes(preset.captionPosition || value.captionPosition) ? (preset.captionPosition || value.captionPosition) : "bottom",
+    primaryColor: /^#[0-9a-f]{6}$/i.test(preset.primaryColor || value.primaryColor) ? (preset.primaryColor || value.primaryColor) : "#ffffff",
+    highlightColor: /^#[0-9a-f]{6}$/i.test(preset.highlightColor || value.highlightColor) ? (preset.highlightColor || value.highlightColor) : "#ffd700",
+    outline: Math.max(0, Math.min(8, Number(preset.outline ?? value.outline) || 0)),
+    shadow: Math.max(0, Math.min(8, Number(value.shadow) || 0)),
+    textCase: ["original", "upper", "lower"].includes(preset.textCase || value.textCase) ? (preset.textCase || value.textCase) : "original",
+    wordsPerBlock: Math.max(1, Math.min(10, Math.round(Number(preset.wordsPerBlock || value.wordsPerBlock) || 5))),
+    animation: ["none", "pop", "fade", "bounce"].includes(preset.animation || value.animation) ? (preset.animation || value.animation) : "pop",
+    removeFillers: value.removeFillers !== false,
+    subtitleText: cleanText(value.subtitleText, "", 120),
+  };
+}
+
 function log(message, details = "") {
   const suffix = details ? ` ${cleanText(details, "", 600)}` : "";
   process.stdout.write(`[${new Date().toISOString()}] ${message}${suffix}\n`);
@@ -68,7 +108,7 @@ function schema(db) {
       source_duration_seconds INTEGER NOT NULL DEFAULT 0, requested_analysis_minutes INTEGER NOT NULL,
       analysis_seconds INTEGER NOT NULL DEFAULT 0, requested_clip_seconds INTEGER NOT NULL DEFAULT 60,
       format TEXT NOT NULL DEFAULT '9:16', framing TEXT NOT NULL DEFAULT 'auto', prompt TEXT NOT NULL DEFAULT '',
-      caption_style TEXT NOT NULL DEFAULT 'impact', thumbnail_url TEXT, status TEXT NOT NULL DEFAULT 'queued',
+      caption_style TEXT NOT NULL DEFAULT 'impact', render_options TEXT NOT NULL DEFAULT '{}', thumbnail_url TEXT, status TEXT NOT NULL DEFAULT 'queued',
       stage TEXT NOT NULL DEFAULT 'Aguardando processador', progress INTEGER NOT NULL DEFAULT 0,
       error_message TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0, credits_charged INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
@@ -83,7 +123,14 @@ function schema(db) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS clips_project_idx ON clips(project_id);
+    CREATE TABLE IF NOT EXISTS credit_history (
+      id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, admin_id TEXT, amount INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS processor_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
   `);
+  const projectColumns = new Set(db.prepare("PRAGMA table_info(projects)").all().map((column) => column.name));
+  if (!projectColumns.has("render_options")) db.exec("ALTER TABLE projects ADD COLUMN render_options TEXT NOT NULL DEFAULT '{}'");
 }
 
 function openDatabase() {
@@ -108,6 +155,11 @@ function updateProject(db, jobId, status, stage, progress, extra = {}) {
 
 function currentJob(db, id) {
   return db.prepare("SELECT cancel_requested, status FROM projects WHERE id = ? LIMIT 1").get(id);
+}
+
+function processorState(db, key, value) {
+  db.prepare("INSERT INTO processor_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
+    .run(key, String(value), Date.now());
 }
 
 function assertContinuing(db, jobId) {
@@ -226,7 +278,7 @@ function claimNext(db) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const job = db.prepare(`
-      SELECT p.*, u.credits AS user_credits
+      SELECT p.*, u.credits AS user_credits, u.monthly_credit_limit AS user_monthly_credit_limit
       FROM projects p JOIN users u ON u.id = p.user_id
       WHERE p.status = 'queued' AND p.cancel_requested = 0 AND u.status = 'active'
       ORDER BY p.created_at ASC LIMIT 1
@@ -286,14 +338,31 @@ async function downloadSource(db, job, metadata, workDirectory) {
     analysis_seconds: metadata.analysisSeconds,
   });
   const outputTemplate = join(workDirectory, "source.%(ext)s");
-  const result = await runCommand(db, job.id, ytDlpPath, [
-    "--no-playlist", "--no-progress", "--no-warnings", "--restrict-filenames",
-    "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
-    "--max-filesize", "2G", "-f", "bv*[height<=1080]+ba/b[height<=1080]",
-    "--merge-output-format", "mp4", "--download-sections", `*0-${metadata.analysisSeconds}`,
-    "--force-keyframes-at-cuts", "--print", "after_move:__STORMCAST_FILE__:%(filepath)s",
-    ...cookiesArguments(), "-o", outputTemplate, metadata.source.canonicalUrl,
-  ], { timeout: 3 * 60 * 60_000 });
+  const attempts = [
+    ["bv*[height<=1080][vcodec!*=av01]+ba/b[height<=1080]", []],
+    ["bv*[height<=1080]+ba/b[height<=1080]", ["--extractor-args", "youtube:player_client=web,web_safari"]],
+    ["b[height<=1080]/b", ["--extractor-args", "youtube:player_client=android_vr,web"]],
+  ];
+  let result = null, lastError = null;
+  for (let index = 0; index < attempts.length; index += 1) {
+    const [formatSelector, extractorArgs] = attempts[index];
+    try {
+      result = await runCommand(db, job.id, ytDlpPath, [
+        "--no-playlist", "--no-progress", "--no-warnings", "--restrict-filenames",
+        "--socket-timeout", "30", "--retries", "5", "--fragment-retries", "5",
+        "--max-filesize", "2G", "-f", formatSelector, ...extractorArgs,
+        "--merge-output-format", "mp4", "--download-sections", `*0-${metadata.analysisSeconds}`,
+        "--force-keyframes-at-cuts", "--print", "after_move:__STORMCAST_FILE__:%(filepath)s",
+        ...cookiesArguments(), "-o", outputTemplate, metadata.source.canonicalUrl,
+      ], { timeout: 3 * 60 * 60_000 });
+      break;
+    } catch (error) {
+      lastError = error;
+      for (const name of readdirSync(workDirectory)) if (name.startsWith("source.")) rmSync(join(workDirectory, name), { force: true });
+      updateProject(db, job.id, "downloading", `Tentando fonte alternativa (${index + 2}/${attempts.length})`, 8 + index * 3);
+    }
+  }
+  if (!result) throw lastError || new Error("Nenhuma fonte compatível foi encontrada.");
   const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith("__STORMCAST_FILE__:"));
   let sourcePath = line ? line.slice("__STORMCAST_FILE__:".length).trim() : "";
   if (!sourcePath) {
@@ -333,13 +402,20 @@ async function transcribe(db, job, audioFiles) {
     form.append("language", "pt");
     form.append("response_format", "verbose_json");
     form.append("timestamp_granularities[]", "segment");
+    form.append("timestamp_granularities[]", "word");
     const payload = await openAiRequest(db, job.id, "/audio/transcriptions", { body: form, timeout: 40 * 60_000 });
     const offset = index * 900;
     for (const segment of payload?.segments || []) {
       const start = Number(segment.start) + offset;
       const end = Number(segment.end) + offset;
       const text = cleanText(segment.text, "", 2000);
-      if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) segments.push({ start, end, text });
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) segments.push({ start, end, text, words: [] });
+    }
+    for (const word of payload?.words || []) {
+      const start = Number(word.start) + offset, end = Number(word.end) + offset;
+      const text = cleanText(word.word, "", 100);
+      const segment = [...segments].reverse().find((item) => start >= item.start - .2 && start <= item.end + .2);
+      if (segment && Number.isFinite(start) && Number.isFinite(end) && end > start && text) segment.words.push({ word: text, start, end });
     }
   }
   if (!segments.length) throw new Error("A OpenAI não encontrou fala compreensível no intervalo analisado.");
@@ -385,57 +461,43 @@ function escapedFilterPath(filePath) {
   return resolve(filePath).replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'").replace(/,/g, "\\,").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
 
-function subtitleStyle(style, format) {
-  const presets = {
-    impact: { primary: "&H0000D7FF", outline: "&H00101010", bold: 1, outlineSize: 3, shadow: 2 },
-    clean: { primary: "&H00FFFFFF", outline: "&H00101010", bold: 1, outlineSize: 2, shadow: 1 },
-    viral: { primary: "&H00FFFFFF", outline: "&H00351082", back: "&H00351082", bold: 1, outlineSize: 2, shadow: 1 },
-    neon: { primary: "&H006AFFBE", outline: "&H00411708", bold: 1, outlineSize: 3, shadow: 2 },
-    focus: { primary: "&H00B0FF7D", outline: "&H00101010", bold: 1, outlineSize: 3, shadow: 1 },
-    editorial: { primary: "&H00FFFFFF", outline: "&H00303030", font: "DejaVu Serif", bold: 0, italic: 1, outlineSize: 2, shadow: 1 },
-    gospel: { primary: "&H0059E6FF", outline: "&H00281606", font: "DejaVu Serif", bold: 1, outlineSize: 3, shadow: 2 },
-    news: { primary: "&H00FFFFFF", outline: "&H001E1E1E", back: "&H001E1E1E", bold: 1, borderStyle: 3, outlineSize: 1, shadow: 0 },
-    gaming: { primary: "&H00FFF36C", outline: "&H00851F6F", bold: 1, outlineSize: 3, shadow: 2 },
-    box: { primary: "&H00101010", outline: "&H00FFFFFF", back: "&H00FFFFFF", bold: 1, borderStyle: 3, outlineSize: 1, shadow: 0 },
-    minimal: { primary: "&H00FFFFFF", outline: "&H00000000", bold: 0, outlineSize: 1, shadow: 1 },
-    punch: { primary: "&H00FFFFFF", outline: "&H00101010", bold: 1, outlineSize: 4, shadow: 3 },
-  };
-  const preset = presets[style] || presets.impact;
-  // libass uses a virtual canvas (commonly 288 px high), so these values scale
-  // to roughly 50 px on a 720x1280 vertical export.
-  const fontSize = format === "9:16" ? 11 : 18;
-  const marginVertical = format === "9:16" ? 38 : 18;
-  const marginHorizontal = format === "9:16" ? 18 : 30;
-  return `FontName=${preset.font || "DejaVu Sans"},FontSize=${fontSize},Bold=${preset.bold},Italic=${preset.italic || 0},PrimaryColour=${preset.primary},OutlineColour=${preset.outline},BackColour=${preset.back || "&H00101010"},BorderStyle=${preset.borderStyle || 1},Outline=${preset.outlineSize},Shadow=${preset.shadow},Alignment=2,MarginL=${marginHorizontal},MarginR=${marginHorizontal},MarginV=${marginVertical}`;
-}
-
 function verticalCrop(focus = "0.5", widthRatio = "9/16") {
   return `crop='ih*${widthRatio}':ih:'max(0,min(iw-ow,(${focus})*iw-ow/2))':0`;
 }
 
 function videoFilter(job, subtitlePath, focusSamples = []) {
-  const subtitles = `subtitles='${escapedFilterPath(subtitlePath)}':force_style='${subtitleStyle(job.caption_style, job.format)}'`;
+  const subtitles = `subtitles='${escapedFilterPath(subtitlePath)}'`;
+  const options = renderOptions(job);
   if (job.format === "16:9") {
-    return `[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,${subtitles}[v]`;
+    return `[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,${subtitles}[v]`;
   }
   if (job.framing === "center") {
-    return `[0:v]${verticalCrop("0.5")},scale=720:1280,${subtitles}[v]`;
+    return `[0:v]${verticalCrop("0.5")},scale=1080:1920,${subtitles}[v]`;
   }
-  if (job.framing === "auto") {
-    return `[0:v]${verticalCrop(focusCropExpression(focusSamples))},scale=720:1280,${subtitles}[v]`;
+  if (["auto", "face", "participant"].includes(job.framing)) {
+    return `[0:v]${verticalCrop(focusCropExpression(focusSamples))},scale=1080:1920,${subtitles}[v]`;
+  }
+  if (job.framing === "manual") {
+    const focus = Math.max(.08, Math.min(.92, .5 + options.manualPosition * .42));
+    return `[0:v]${verticalCrop(String(focus))},scale=1080:1920,${subtitles}[v]`;
   }
   if (job.framing === "split") {
-    return `[0:v]split=2[left][right];[left]crop=iw/2:ih:0:0,scale=720:640:force_original_aspect_ratio=increase,crop=720:640[leftv];[right]crop=iw/2:ih:iw/2:0,scale=720:640:force_original_aspect_ratio=increase,crop=720:640[rightv];[leftv][rightv]vstack=inputs=2,${subtitles}[v]`;
+    return `[0:v]split=2[left][right];[left]crop=iw/2:ih:0:0,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[leftv];[right]crop=iw/2:ih:iw/2:0,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[rightv];[leftv][rightv]vstack=inputs=2,${subtitles}[v]`;
   }
   if (job.framing === "spotlight") {
     const focus = focusCropExpression(focusSamples);
-    return `[0:v]split=2[face][full];[face]${verticalCrop(focus, "720/850")},scale=720:850[facev];[full]scale=720:430:force_original_aspect_ratio=decrease,pad=720:430:(ow-iw)/2:(oh-ih)/2:black[fullv];[facev][fullv]vstack=inputs=2,${subtitles}[v]`;
+    return `[0:v]split=2[face][full];[face]${verticalCrop(focus, "1080/1275")},scale=1080:1275[facev];[full]scale=1080:645:force_original_aspect_ratio=decrease,pad=1080:645:(ow-iw)/2:(oh-ih)/2:black[fullv];[facev][fullv]vstack=inputs=2,${subtitles}[v]`;
   }
-  return `[0:v]split=2[bg][fg];[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=20:10[blur];[fg]scale=720:1280:force_original_aspect_ratio=decrease[front];[blur][front]overlay=(W-w)/2:(H-h)/2,${subtitles}[v]`;
+  if (job.framing === "react") {
+    const focus = focusCropExpression(focusSamples);
+    return `[0:v]split=2[main][react];[main]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[mainv];[react]${verticalCrop(focus)},scale=410:730[reactv];[mainv][reactv]overlay=W-w-44:44:format=auto,${subtitles}[v]`;
+  }
+  const blur = Math.max(1, Math.round(options.blurStrength));
+  return `[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=${blur}:${Math.max(1, Math.round(blur / 2))}[blur];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[front];[blur][front]overlay=(W-w)/2:(H-h)/2,${subtitles}[v]`;
 }
 
 async function detectFocusSamples(db, job, sourcePath, clip) {
-  if (job.format !== "9:16" || !["auto", "spotlight"].includes(job.framing)) return [];
+  if (job.format !== "9:16" || !["auto", "face", "participant", "spotlight", "react"].includes(job.framing)) return [];
   try {
     const result = await runCommand(db, job.id, pythonPath, [
       faceTrackerPath, "--video", sourcePath, "--start", String(clip.startSeconds),
@@ -457,10 +519,10 @@ async function renderClips(db, job, sourcePath, segments, clips, stagingDirector
     const progress = 70 + ((index / clips.length) * 24);
     updateProject(db, job.id, "rendering", `Renderizando corte ${index + 1} de ${clips.length}`, progress);
     const base = `corte-${String(index + 1).padStart(2, "0")}`;
-    const subtitlePath = join(stagingDirectory, `${base}.srt`);
+    const subtitlePath = join(stagingDirectory, `${base}.ass`);
     const videoPath = join(stagingDirectory, `${base}.mp4`);
     const posterPath = join(stagingDirectory, `${base}.jpg`);
-    const subtitle = buildSrt(segments, clip.startSeconds, clip.endSeconds, job.format === "9:16" ? 28 : 42);
+    const subtitle = buildAss(segments, clip.startSeconds, clip.endSeconds, { ...renderOptions(job), format: job.format, style: job.caption_style });
     if (!subtitle) throw new Error(`Não há legenda sincronizada para o corte ${index + 1}.`);
     writeFileSync(subtitlePath, subtitle, { encoding: "utf8", mode: 0o640 });
     const focusSamples = await detectFocusSamples(db, job, sourcePath, clip);
@@ -519,6 +581,8 @@ function completeProject(db, job, rendered, stagingDirectory) {
       );
     }
     db.prepare("UPDATE users SET credits = credits - ?, updated_at = ? WHERE id = ?").run(credits, now, job.user_id);
+    db.prepare("INSERT INTO credit_history (id,user_id,admin_id,amount,balance_after,reason,created_at) VALUES (?,?,NULL,?,?,?,?)")
+      .run(randomBytes(16).toString("hex"), job.user_id, -credits, Number(user.credits) - credits, `Processamento: ${job.title}`, now);
     db.prepare(`
       UPDATE projects SET status = 'ready', stage = 'Cortes prontos', progress = 100, credits_charged = ?,
         error_message = NULL, updated_at = ?, completed_at = ? WHERE id = ?
@@ -561,6 +625,15 @@ async function processJob(db, claimed) {
     const actualJob = { ...claimed, title: metadata.title, analysis_seconds: metadata.analysisSeconds };
     const requiredCredits = Math.ceil(metadata.analysisSeconds / 60);
     if (Number(claimed.user_credits) < requiredCredits) throw new Error(`Saldo insuficiente: este vídeo exige ${requiredCredits} créditos.`);
+    if (Number(claimed.user_monthly_credit_limit) > 0) {
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+      const usage = db.prepare("SELECT COALESCE(SUM(-amount), 0) used FROM credit_history WHERE user_id = ? AND amount < 0 AND created_at >= ?").get(claimed.user_id, monthStart.getTime());
+      if (Number(usage?.used || 0) + requiredCredits > Number(claimed.user_monthly_credit_limit)) {
+        throw new Error(`Limite mensal de ${claimed.user_monthly_credit_limit} créditos atingido.`);
+      }
+    }
     const sourcePath = await downloadSource(db, actualJob, metadata, workDirectory);
     const audioFiles = await extractAudio(db, actualJob, sourcePath, workDirectory, metadata.analysisSeconds);
     const segments = await transcribe(db, actualJob, audioFiles);
@@ -582,6 +655,7 @@ async function processJob(db, claimed) {
       const message = publicError(error);
       updateProject(db, claimed.id, "failed", "Falha no processamento", 0, { error_message: message, completed_at: now });
       log("Projeto falhou:", `${claimed.id} ${message}`);
+      processorState(db, "last_error", JSON.stringify({ projectId: claimed.id, message, at: now }));
     }
   } finally {
     rmSync(workDirectory, { recursive: true, force: true });
@@ -665,13 +739,17 @@ async function main() {
   mkdirSync(clipsRoot, { recursive: true, mode: 0o750 });
   const db = openDatabase();
   recoverInterrupted(db);
+  processorState(db, "status", "running");
+  processorState(db, "started_at", Date.now());
   log("Processador iniciado. Fila:", databasePath);
   while (!stopRequested) {
+    processorState(db, "heartbeat", Date.now());
     const job = claimNext(db);
     if (job) await processJob(db, job);
     else if (argv.has("--once")) break;
     else await sleep(pollingMilliseconds);
   }
+  processorState(db, "status", "stopped");
   db.close();
   log("Processador encerrado.");
 }
