@@ -3,6 +3,7 @@ import { execute, queryOne } from "../../../lib/database";
 import { listProjects } from "../../../lib/projects";
 import { randomToken } from "../../../lib/security";
 import { normalizeYouTubeUrl, processorConfigured } from "../../../lib/youtube";
+import { captionStyleIds, framingIds, normalizeRenderOptions } from "../../../lib/render-options";
 
 type CreateProjectBody = {
   sourceUrl?: unknown;
@@ -16,9 +17,8 @@ type CreateProjectBody = {
   framing?: unknown;
   prompt?: unknown;
   captionStyle?: unknown;
+  renderOptions?: unknown;
 };
-
-type ActiveProjectRow = { id: string };
 
 function cleanText(value: unknown, maximum: number) {
   if (typeof value !== "string") return "";
@@ -68,24 +68,36 @@ export async function POST(request: Request) {
       return Response.json({ error: `Saldo insuficiente. Este processamento exige até ${analysisMinutes} créditos.` }, { status: 402 });
     }
 
-    const active = await queryOne<ActiveProjectRow>(
-      `SELECT id FROM projects
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const monthlyUsage = await queryOne<{ used: number }>(
+      "SELECT COALESCE(SUM(-amount), 0) used FROM credit_history WHERE user_id = ? AND amount < 0 AND created_at >= ?",
+      [user.id, monthStart.getTime()],
+    );
+    if (user.monthlyCreditLimit > 0 && Number(monthlyUsage?.used || 0) + analysisMinutes > user.monthlyCreditLimit) {
+      return Response.json({ error: `Seu limite mensal de ${user.monthlyCreditLimit} créditos seria ultrapassado.` }, { status: 402 });
+    }
+
+    const active = await queryOne<{ total: number }>(
+      `SELECT COUNT(*) total FROM projects
        WHERE user_id = ? AND status IN ('queued', 'downloading', 'transcribing', 'analyzing', 'rendering')
-       LIMIT 1`,
+      `,
       [user.id],
     );
-    if (active) {
-      return Response.json({ error: "Você já possui um vídeo em processamento. Aguarde ou cancele o trabalho atual." }, { status: 409 });
+    if (Number(active?.total || 0) >= user.maxActiveProjects) {
+      return Response.json({ error: `Seu plano permite até ${user.maxActiveProjects} projeto(s) simultâneo(s). Aguarde ou cancele um trabalho atual.` }, { status: 409 });
     }
 
     const format = body.format === "16:9" ? "16:9" : "9:16";
-    const framing = ["auto", "fit", "center", "split", "spotlight"].includes(String(body.framing))
+    const framing = framingIds.includes(String(body.framing) as typeof framingIds[number])
       ? String(body.framing)
       : "auto";
     const requestedClipSeconds = [30, 60, 90, 180].includes(Number(body.clipDuration)) ? Number(body.clipDuration) : 60;
-    const captionStyle = ["impact", "clean", "viral", "neon", "focus", "editorial", "gospel", "news", "gaming", "box", "minimal", "punch"].includes(String(body.captionStyle))
+    const captionStyle = captionStyleIds.includes(String(body.captionStyle) as typeof captionStyleIds[number])
       ? String(body.captionStyle)
       : "impact";
+    const renderOptions = JSON.stringify(normalizeRenderOptions(body.renderOptions));
     const title = cleanText(body.title, 180) || "Vídeo do YouTube";
     const prompt = cleanText(body.prompt, 520);
     const thumbnailUrl = `https://i.ytimg.com/vi/${source.videoId}/hqdefault.jpg`;
@@ -95,9 +107,9 @@ export async function POST(request: Request) {
     await execute(
       `INSERT INTO projects (
         id, user_id, title, source_url, source_platform, source_video_id, source_duration_seconds,
-        requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style,
+        requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style, render_options,
         thumbnail_url, status, stage, progress, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
       [
         id,
         user.id,
@@ -111,6 +123,7 @@ export async function POST(request: Request) {
         framing,
         prompt,
         captionStyle,
+        renderOptions,
         thumbnailUrl,
         now,
         now,

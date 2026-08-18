@@ -22,6 +22,13 @@
       "when": 1787086982168,
       "tag": "0002_absurd_night_nurse",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787089247709,
+      "tag": "0003_stiff_nitro",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,10 @@ export const users = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     lastLoginAt: integer("last_login_at"),
+    forcePasswordChange: integer("force_password_change", { mode: "boolean" }).notNull().default(false),
+    plan: text("plan").notNull().default("free"),
+    monthlyCreditLimit: integer("monthly_credit_limit").notNull().default(120),
+    maxActiveProjects: integer("max_active_projects").notNull().default(1),
   },
   (table) => [
     uniqueIndex("users_email_unique").on(table.email),
@@ -52,6 +56,7 @@ export const projects = sqliteTable(
     framing: text("framing", { enum: ["auto", "fit", "center", "split", "spotlight"] }).notNull().default("fit"),
     prompt: text("prompt").notNull().default(""),
     captionStyle: text("caption_style").notNull().default("impact"),
+    renderOptions: text("render_options").notNull().default("{}"),
     thumbnailUrl: text("thumbnail_url"),
     status: text("status", {
       enum: ["queued", "downloading", "transcribing", "analyzing", "rendering", "ready", "failed", "cancelled"],
@@ -97,6 +102,32 @@ export const clips = sqliteTable(
 );
 
 export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const creditHistory = sqliteTable("credit_history", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  adminId: text("admin_id").references(() => users.id, { onDelete: "set null" }),
+  amount: integer("amount").notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("credit_history_user_idx").on(table.userId), index("credit_history_created_idx").on(table.createdAt)]);
+
+export const adminAudit = sqliteTable("admin_audit", {
+  id: text("id").primaryKey(),
+  adminId: text("admin_id").references(() => users.id, { onDelete: "set null" }),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id"),
+  details: text("details").notNull().default("{}"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("admin_audit_created_idx").on(table.createdAt), index("admin_audit_admin_idx").on(table.adminId)]);
+
+export const processorState = sqliteTable("processor_state", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedAt: integer("updated_at").notNull(),

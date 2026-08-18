@@ -95,6 +95,91 @@ export function buildSrt(segments, clipStart, clipEnd, maximumCharacters = 42) {
   )).join("\n");
 }
 
+function assTime(seconds) {
+  const centiseconds = Math.max(0, Math.round(Number(seconds) * 100));
+  const hours = Math.floor(centiseconds / 360000);
+  const minutes = Math.floor((centiseconds % 360000) / 6000);
+  const secs = Math.floor((centiseconds % 6000) / 100);
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centiseconds % 100).padStart(2, "0")}`;
+}
+
+function assColor(hex, alpha = "00") {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+  if (!match) return `&H${alpha}FFFFFF`;
+  return `&H${alpha}${match[3]}${match[2]}${match[1]}`.toUpperCase();
+}
+
+function cleanCaptionWord(value, removeFillers) {
+  const text = cleanText(value, "", 80);
+  if (!removeFillers) return text;
+  return /^(é+|eh+|né+|ahn+|hum+|tipo|assim)[,.!?…]*$/i.test(text) ? "" : text;
+}
+
+export function buildAss(segments, clipStart, clipEnd, options = {}) {
+  const vertical = options.format !== "16:9";
+  const width = vertical ? 1080 : 1920, height = vertical ? 1920 : 1080;
+  const font = cleanText(options.captionFont, "DejaVu Sans", 80);
+  const size = Math.max(28, Math.min(96, Number(options.captionSize) || 54));
+  const position = ["top", "middle", "bottom"].includes(options.captionPosition) ? options.captionPosition : "bottom";
+  const alignment = position === "top" ? 8 : position === "middle" ? 5 : 2;
+  const safeMargins = { shorts: 270, reels: 320, tiktok: 380 };
+  const marginV = vertical ? (safeMargins[options.safeArea] || 270) : 70;
+  const primary = assColor(options.primaryColor || "#ffffff");
+  const highlight = assColor(options.highlightColor || "#ffd700");
+  const outline = Math.max(0, Math.min(8, Number(options.outline) || 0));
+  const shadow = Math.max(0, Math.min(8, Number(options.shadow) || 0));
+  const caseMode = options.textCase || "original";
+  const blockSize = Math.max(1, Math.min(10, Math.round(Number(options.wordsPerBlock) || 5)));
+  const allWords = [];
+  for (const segment of segments) {
+    if (Array.isArray(segment.words) && segment.words.length) {
+      for (const word of segment.words) allWords.push(word);
+    } else {
+      const words = cleanText(segment.text, "", 2000).split(/\s+/).filter(Boolean);
+      const duration = Math.max(0.1, Number(segment.end) - Number(segment.start));
+      words.forEach((word, index) => allWords.push({ word, start: Number(segment.start) + duration * index / words.length, end: Number(segment.start) + duration * (index + 1) / words.length }));
+    }
+  }
+  const words = allWords
+    .filter((word) => Number(word.end) > clipStart && Number(word.start) < clipEnd)
+    .map((word) => ({ start: Math.max(clipStart, Number(word.start)), end: Math.min(clipEnd, Number(word.end)), word: cleanCaptionWord(word.word, options.removeFillers !== false) }))
+    .filter((word) => word.word && word.end > word.start);
+  const lines = [];
+  for (let index = 0; index < words.length; index += blockSize) {
+    const block = words.slice(index, index + blockSize);
+    if (!block.length) continue;
+    let text = block.map((word) => {
+      let value = word.word;
+      if (caseMode === "upper") value = value.toUpperCase();
+      if (caseMode === "lower") value = value.toLowerCase();
+      const duration = Math.max(1, Math.round((word.end - word.start) * 100));
+      return `{\\1c${highlight}\\k${duration}}${value}{\\1c${primary}}`;
+    }).join(" ");
+    if (options.animation === "fade") text = `{\\fad(120,120)}${text}`;
+    if (options.animation === "pop") text = `{\\fscx110\\fscy110\\t(0,140,\\fscx100\\fscy100)}${text}`;
+    if (options.animation === "bounce") text = `{\\fscy85\\t(0,120,\\fscy108)\\t(120,220,\\fscy100)}${text}`;
+    lines.push(`Dialogue: 0,${assTime(block[0].start - clipStart)},${assTime(block.at(-1).end - clipStart)},StormCast,,0,0,0,,${text}`);
+  }
+  const customSubtitle = cleanText(options.subtitleText, "", 120).replace(/[{}]/g, "");
+  if (customSubtitle) lines.push(`Dialogue: 1,0:00:00.00,${assTime(clipEnd - clipStart)},Subtitle,,0,0,0,,${customSubtitle}`);
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: StormCast,${font},${size},${primary},${highlight},&H00101010,&H78000000,-1,0,0,0,100,100,0,0,1,${outline},${shadow},${alignment},80,80,${marginV},1
+Style: Subtitle,${font},${Math.max(24, size * .55)},${primary},${highlight},&H00101010,&H78000000,0,0,0,0,100,100,0,0,1,${outline},${shadow},${position === "top" ? 8 : 2},80,80,${Math.max(80, marginV - 100)},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${lines.join("\n")}
+`;
+}
+
 export function transcriptForAnalysis(segments) {
   return segments.map((segment) => {
     const start = Math.max(0, Number(segment.start) || 0);
