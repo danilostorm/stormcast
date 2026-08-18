@@ -12,7 +12,8 @@ Plataforma para transformar vídeos longos autorizados em cortes legendados para
 - download temporário, áudio segmentado e limpeza automática;
 - transcrição com timestamps pela OpenAI;
 - escolha estruturada dos melhores trechos pela OpenAI;
-- renderização local com FFmpeg em 9:16 ou 16:9, legenda e áudio AAC;
+- renderização local com FFmpeg em 9:16 ou 16:9, cinco enquadramentos e 12 estilos de legenda;
+- detecção facial opcional com OpenCV para movimentar o recorte vertical automaticamente;
 - prévia e download de MP4 acessíveis somente pelo dono do projeto;
 - cobrança de créditos apenas depois da conclusão de todos os cortes;
 - cancelamento, falha sem cobrança e retomada da fila após reinício.
@@ -55,9 +56,10 @@ Os comandos abaixo consideram o projeto em `/var/www/stormcast` e o serviço exe
 sudo apt update
 sudo apt install -y ffmpeg python3-venv ca-certificates
 sudo python3 -m venv /opt/stormcast-tools
-sudo /opt/stormcast-tools/bin/pip install --upgrade pip yt-dlp
+sudo /opt/stormcast-tools/bin/pip install --upgrade pip yt-dlp opencv-python-headless
 /usr/bin/ffmpeg -version
 /opt/stormcast-tools/bin/yt-dlp --version
+/opt/stormcast-tools/bin/python -c "import cv2; print(cv2.__version__)"
 ```
 
 Não instale pacotes NVIDIA: este fluxo foi preparado para CPU.
@@ -102,6 +104,7 @@ STORMCAST_PROCESSOR_ENABLED="1"
 STORMCAST_YTDLP_PATH="/opt/stormcast-tools/bin/yt-dlp"
 STORMCAST_FFMPEG_PATH="/usr/bin/ffmpeg"
 STORMCAST_FFPROBE_PATH="/usr/bin/ffprobe"
+STORMCAST_PYTHON_PATH="/opt/stormcast-tools/bin/python"
 STORMCAST_MEDIA_DIR="/var/lib/stormcast/media"
 STORMCAST_MAX_VIDEO_MINUTES="90"
 STORMCAST_MIN_FREE_GB="5"

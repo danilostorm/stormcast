@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type View = "dashboard" | "projects" | "clips" | "live" | "brand" | "analytics" | "billing" | "settings";
 type ProjectStatus = "queued" | "downloading" | "transcribing" | "analyzing" | "rendering" | "ready" | "failed" | "cancelled";
+type Framing = "auto" | "fit" | "center" | "split" | "spotlight";
 
 type Clip = {
   id: string; title: string; hook: string; caption: string; startSeconds: number; endSeconds: number;
@@ -21,7 +22,7 @@ type Clip = {
 type Project = {
   id: string; title: string; platform: string; sourceUrl: string; sourceVideoId: string;
   sourceDurationSeconds: number; requestedAnalysisMinutes: number; analysisSeconds: number;
-  requestedClipSeconds: number; format: "9:16" | "16:9"; framing: "fit" | "center";
+  requestedClipSeconds: number; format: "9:16" | "16:9"; framing: Framing;
   prompt: string; captionStyle: string; thumbnailUrl: string | null; status: ProjectStatus; stage: string;
   progress: number; error: string | null; creditsCharged: number; createdAt: number;
   updatedAt: number; completedAt: number | null; clips: Clip[];
@@ -39,6 +40,20 @@ const captionStyles = [
   { id: "neon", label: "Neon", css: "caption-neon", sample: "ISSO MUDA TUDO" },
   { id: "focus", label: "Foco", css: "caption-focus", sample: "preste atenção" },
   { id: "editorial", label: "Editorial", css: "caption-editorial", sample: "Uma verdade simples" },
+  { id: "gospel", label: "Gospel premium", css: "caption-gospel", sample: "DEUS AINDA ESTÁ AGINDO" },
+  { id: "news", label: "Notícia", css: "caption-news", sample: "ENTENDA O QUE ACONTECEU" },
+  { id: "gaming", label: "Gaming", css: "caption-gaming", sample: "ISSO FOI INSANO" },
+  { id: "box", label: "Caixa clara", css: "caption-box", sample: "UMA RESPOSTA DIRETA" },
+  { id: "minimal", label: "Minimalista", css: "caption-minimal", sample: "menos ruído, mais mensagem" },
+  { id: "punch", label: "Punch", css: "caption-punch", sample: "PRESTA ATENÇÃO NISSO" },
+];
+
+const framingOptions: { id: Framing; label: string; description: string; Icon: LucideIcon }[] = [
+  { id: "auto", label: "Automático", description: "Segue o rosto em cena", Icon: Sparkles },
+  { id: "center", label: "Centro", description: "Crop vertical central", Icon: Frame },
+  { id: "split", label: "Tela dividida", description: "Duas pessoas, topo e base", Icon: PanelLeftClose },
+  { id: "spotlight", label: "Foco + contexto", description: "Pessoa em destaque e cena", Icon: Video },
+  { id: "fit", label: "Vídeo inteiro", description: "Fundo desfocado", Icon: Monitor },
 ];
 
 const activeStatuses: ProjectStatus[] = ["queued", "downloading", "transcribing", "analyzing", "rendering"];
@@ -75,6 +90,10 @@ function friendlyProjectError(message: string | null) {
   return message;
 }
 
+function framingLabel(framing: Framing) {
+  return framingOptions.find((option) => option.id === framing)?.label || "Automático";
+}
+
 function VisualArt({ compact = false }: { compact?: boolean }) {
   return <div className={`visual-art theme-violet${compact ? " visual-art-compact" : ""}`} aria-hidden="true">
     <div className="visual-orbit orbit-one" /><div className="visual-orbit orbit-two" />
@@ -86,6 +105,13 @@ function VisualArt({ compact = false }: { compact?: boolean }) {
 
 function SourcePicture({ src, alt, compact = false }: { src: string | null; alt: string; compact?: boolean }) {
   return src ? <img className={`source-picture${compact ? " source-picture-compact" : ""}`} src={src} alt={alt} /> : <VisualArt compact={compact} />;
+}
+
+function LayoutPreview({ src, alt, framing }: { src: string | null; alt: string; framing: Framing }) {
+  if (framing === "split") return <div className="layout-preview preview-split"><SourcePicture src={src} alt={alt} /><SourcePicture src={src} alt="" /></div>;
+  if (framing === "spotlight") return <div className="layout-preview preview-spotlight"><SourcePicture src={src} alt={alt} /><SourcePicture src={src} alt="" /></div>;
+  if (framing === "fit") return <div className="layout-preview preview-fit"><SourcePicture src={src} alt="" /><SourcePicture src={src} alt={alt} /></div>;
+  return <div className={`layout-preview preview-${framing}`}><SourcePicture src={src} alt={alt} /></div>;
 }
 
 function ProjectCard({ project, selected, onSelect, onOpen, onRetry, onEdit, onDuplicate, onCancel, onRemove }: {
@@ -138,7 +164,7 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   const [inspecting, setInspecting] = useState(false);
   const [creating, setCreating] = useState(false);
   const [format, setFormat] = useState<"9:16" | "16:9">("9:16");
-  const [framing, setFraming] = useState<"fit" | "center">("fit");
+  const [framing, setFraming] = useState<Framing>("auto");
   const [prompt, setPrompt] = useState("Selecione momentos claros, perguntas fortes, respostas, histórias e frases marcantes. Preserve o contexto e não distorça a mensagem.");
   const [clipDuration, setClipDuration] = useState("60");
   const [analysisMinutes, setAnalysisMinutes] = useState(1);
@@ -213,7 +239,7 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   }, [loadProjects, projects]);
   async function signOut() { await fetch("/api/auth/logout", { method: "POST" }); window.location.assign("/"); }
   function changeView(next: View) { setView(next); setMenuOpen(false); if (next === "clips" && !currentProjectId && readyProjects[0]) setCurrentProjectId(readyProjects[0].id); }
-  function resetNewProject() { setVideoUrl(""); setMetadata(null); setInputError(""); setFormat("9:16"); setFraming("fit"); setClipDuration("60"); setAnalysisMinutes(1); setEditingProjectId(null); }
+  function resetNewProject() { setVideoUrl(""); setMetadata(null); setInputError(""); setFormat("9:16"); setFraming("auto"); setClipDuration("60"); setAnalysisMinutes(1); setEditingProjectId(null); }
   function openNewProject() { resetNewProject(); setWizardStep(0); }
   function openProject(project: Project) {
     setCurrentProjectId(project.id);
@@ -356,6 +382,7 @@ export default function StudioApp({ user }: { user: StudioUser }) {
 
   async function advanceWizard() {
     if (wizardStep === 0) { await inspectSource(true); return; }
+    if (wizardStep === 1 && format === "16:9") setFraming("fit");
     if (wizardStep !== null && wizardStep < 4) setWizardStep(wizardStep + 1);
   }
 
@@ -423,13 +450,13 @@ export default function StudioApp({ user }: { user: StudioUser }) {
       <div className="wizard-content">
         {wizardStep === 0 && <section className="wizard-step source-step"><span className="step-kicker">PASSO 1 DE 5</span><h1>Qual vídeo vamos processar?</h1><p>Use um vídeo do YouTube que você tenha autorização para editar.</p><div className={`wizard-link-field${inputError ? " has-error" : ""}`}><Link2 /><input value={videoUrl} onChange={(event) => { setVideoUrl(event.target.value); setMetadata(null); setInputError(""); }} placeholder="https://youtube.com/watch?v=..." /></div>{inputError && <span className="field-error">{inputError}</span>}<div className="safe-note"><ShieldCheck size={15} /> O servidor consulta título e duração reais com yt-dlp.</div></section>}
 
-        {wizardStep === 1 && metadata && <section className="wizard-step format-step"><span className="step-kicker">PASSO 2 DE 5</span><h1>Defina o formato do corte</h1><p>Escolha uma composição disponível no renderizador atual.</p><div className="wizard-source-summary"><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} compact /><div><strong>{metadata.title}</strong><span>{metadata.channel} • {formatClock(metadata.durationSeconds)}</span></div><button onClick={() => setWizardStep(0)}>Trocar</button></div><div className="option-block"><label>Proporção</label><div className="two-options"><button className={format === "9:16" ? "selected" : ""} onClick={() => setFormat("9:16")}><Monitor /><span><strong>Vertical</strong><small>Reels, Shorts e TikTok</small></span>{format === "9:16" && <Check />}</button><button className={format === "16:9" ? "selected" : ""} onClick={() => setFormat("16:9")}><PanelLeftClose /><span><strong>Horizontal</strong><small>YouTube e apresentações</small></span>{format === "16:9" && <Check />}</button></div></div><div className="option-block"><label>Enquadramento</label><div className="layout-options"><button className={framing === "fit" ? "selected" : ""} onClick={() => setFraming("fit")}><Sparkles /><span>Vídeo inteiro<small>Fundo desfocado</small></span>{framing === "fit" && <Check />}</button><button className={framing === "center" ? "selected" : ""} onClick={() => setFraming("center")}><Frame /><span>Corte central<small>Preenche a tela</small></span>{framing === "center" && <Check />}</button></div></div><div className="option-block"><label htmlFor="custom-prompt">Direção para a IA <span>opcional</span></label><textarea id="custom-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={520} rows={5} /><div className="prompt-bottom"><div><button onClick={() => setPrompt("Busque ensinamentos claros, frases marcantes e reflexões práticas. Evite trechos sem conclusão.")}>Educativo</button><button onClick={() => setPrompt("Encontre perguntas fortes, respostas surpreendentes e momentos de alta curiosidade.")}>Curiosidade</button><button onClick={() => setPrompt("Selecione trechos cristãos com contexto completo, clareza bíblica e uma mensagem edificante.")}>Gospel</button></div><span>{prompt.length}/520</span></div></div></section>}
+        {wizardStep === 1 && metadata && <section className="wizard-step format-step"><span className="step-kicker">PASSO 2 DE 5</span><h1>Defina o formato do corte</h1><p>Crie um vídeo vertical de verdade, com composição pensada para cada tipo de conteúdo.</p><div className="wizard-source-summary"><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} compact /><div><strong>{metadata.title}</strong><span>{metadata.channel} • {formatClock(metadata.durationSeconds)}</span></div><button onClick={() => setWizardStep(0)}>Trocar</button></div><div className="option-block"><label>Proporção</label><div className="two-options"><button className={format === "9:16" ? "selected" : ""} onClick={() => setFormat("9:16")}><Monitor /><span><strong>Vertical real</strong><small>Reels, Shorts e TikTok</small></span>{format === "9:16" && <Check />}</button><button className={format === "16:9" ? "selected" : ""} onClick={() => setFormat("16:9")}><PanelLeftClose /><span><strong>Horizontal</strong><small>YouTube e apresentações</small></span>{format === "16:9" && <Check />}</button></div></div><div className="option-block"><label>Enquadramento</label><div className="layout-options">{framingOptions.map(({ id, label, description, Icon }) => <button key={id} className={framing === id ? "selected" : ""} onClick={() => setFraming(id)} disabled={format === "16:9" && id !== "fit"}><Icon /><span>{label}<small>{format === "16:9" && id !== "fit" ? "Disponível no vertical" : description}</small></span>{framing === id && <Check />}</button>)}</div></div>{format === "9:16" && <div className="smart-framing-note"><Sparkles /><div><strong>Foco automático por rosto</strong><p>O renderizador analisa quadros do trecho e movimenta o recorte suavemente. Se nenhum rosto for detectado, mantém o centro com segurança.</p></div></div>}<div className="option-block"><label htmlFor="custom-prompt">Direção para a IA <span>opcional</span></label><textarea id="custom-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={520} rows={5} /><div className="prompt-bottom"><div><button onClick={() => setPrompt("Busque ensinamentos claros, frases marcantes e reflexões práticas. Evite trechos sem conclusão.")}>Educativo</button><button onClick={() => setPrompt("Encontre perguntas fortes, respostas surpreendentes e momentos de alta curiosidade.")}>Curiosidade</button><button onClick={() => setPrompt("Selecione trechos cristãos com contexto completo, clareza bíblica e uma mensagem edificante.")}>Gospel</button></div><span>{prompt.length}/520</span></div></div></section>}
 
         {wizardStep === 2 && metadata && <section className="wizard-step duration-step"><span className="step-kicker">PASSO 3 DE 5</span><h1>Ajuste a duração</h1><p>Defina o tamanho aproximado dos cortes e quanto do começo do vídeo será analisado.</p><div className="option-block"><label>Duração de cada corte</label><div className="duration-options">{[["30", "30 seg"], ["60", "1 min"], ["90", "1:30 min"], ["180", "3 min"]].map(([value, label]) => <button key={value} className={clipDuration === value ? "selected" : ""} onClick={() => setClipDuration(value)}>{label}</button>)}</div></div><div className="timeline-card"><div className="timeline-head"><label>Intervalo analisado</label><span>{analysisMinutes} min / {maximumAnalysisMinutes} min</span></div><div className="timeline-time"><span>00:00:00</span><strong>{formatClock(Math.min(metadata.durationSeconds, analysisMinutes * 60))}</strong><span>{formatClock(metadata.durationSeconds)}</span></div><div className="timeline-film">{Array.from({ length: 9 }, (_, index) => <div key={index}><SourcePicture src={metadata.thumbnailUrl} alt="" compact /></div>)}</div><input type="range" min={1} max={maximumAnalysisMinutes} value={Math.min(analysisMinutes, maximumAnalysisMinutes)} onChange={(event) => setAnalysisMinutes(Number(event.target.value))} /></div><div className="credit-notice"><span><Sparkles /></span><div><strong>Máximo: {analysisMinutes} créditos</strong><p>A cobrança ocorre só depois que todos os MP4 forem gerados.</p></div><em>{creditBalance} disponíveis</em></div></section>}
 
-        {wizardStep === 3 && metadata && <section className="wizard-step subtitle-step"><span className="step-kicker">PASSO 4 DE 5</span><h1>Como as legendas vão aparecer?</h1><p>O texto será transcrito e sincronizado pela OpenAI.</p><div className="subtitle-layout"><div className={`phone-preview${format === "16:9" ? " phone-landscape" : ""}`}><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} /><div className={`caption-overlay ${selectedCaption.css}`}>{selectedCaption.sample}</div><span className="handle-preview">@{userHandle}</span></div><div className="subtitle-choices">{captionStyles.map((style) => <button key={style.id} className={captionStyle === style.id ? "selected" : ""} onClick={() => setCaptionStyle(style.id)}><span className={style.css}>{style.sample}</span><strong>{style.label}</strong>{captionStyle === style.id && <i><Check size={13} /></i>}</button>)}</div></div></section>}
+        {wizardStep === 3 && metadata && <section className="wizard-step subtitle-step"><span className="step-kicker">PASSO 4 DE 5</span><h1>Como as legendas vão aparecer?</h1><p>Escolha entre 12 modelos que também existem no renderizador final.</p><div className="subtitle-layout"><div><div className={`phone-preview${format === "16:9" ? " phone-landscape" : ""}`}><LayoutPreview src={metadata.thumbnailUrl} alt={metadata.title} framing={format === "16:9" ? "fit" : framing} /><div className={`caption-overlay ${selectedCaption.css}`}>{selectedCaption.sample}</div><span className="handle-preview">@{userHandle}</span></div><div className="preview-caption-meta"><span>{format}</span><strong>{framingLabel(format === "16:9" ? "fit" : framing)}</strong><small>Prévia da composição e da legenda</small></div></div><div className="subtitle-choices">{captionStyles.map((style) => <button key={style.id} className={captionStyle === style.id ? "selected" : ""} onClick={() => setCaptionStyle(style.id)}><span className={style.css}>{style.sample}</span><strong>{style.label}</strong>{captionStyle === style.id && <i><Check size={13} /></i>}</button>)}</div></div></section>}
 
-        {wizardStep === 4 && metadata && <section className="wizard-step review-step"><span className="step-kicker">PASSO 5 DE 5</span><h1>Pronto para o processamento real</h1><p>O trabalho entrará na fila única do servidor e poderá levar vários minutos sem GPU.</p><div className="review-hero"><div className="review-art"><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} /><span><Play /></span></div><div><span>YouTube • {metadata.channel}</span><h2>{metadata.title}</h2><p>{metadata.canonicalUrl}</p></div></div><div className="review-grid"><button onClick={() => setWizardStep(1)}><span><Monitor /></span><div><small>FORMATO</small><strong>{format === "9:16" ? "Vertical 9:16" : "Horizontal 16:9"}</strong><em>{framing === "fit" ? "Vídeo inteiro + fundo" : "Corte central"}</em></div><ChevronRight /></button><button onClick={() => setWizardStep(2)}><span><Clock3 /></span><div><small>DURAÇÃO</small><strong>{clipDuration} segundos</strong><em>{analysisMinutes} minutos analisados</em></div><ChevronRight /></button><button onClick={() => setWizardStep(3)}><span><Captions /></span><div><small>LEGENDA</small><strong>{selectedCaption.label}</strong><em>Português automático</em></div><ChevronRight /></button><button onClick={() => setWizardStep(1)}><span><WandSparkles /></span><div><small>DIREÇÃO DA IA</small><strong>{prompt ? "Personalizada" : "Padrão"}</strong><em>{prompt.length} caracteres</em></div><ChevronRight /></button></div><div className="analysis-note"><Sparkles /><div><strong>Etapas reais</strong><p>Download autorizado, extração de áudio, transcrição, seleção editorial e renderização com FFmpeg.</p></div></div>{inputError && <span className="field-error review-error">{inputError}</span>}</section>}
+        {wizardStep === 4 && metadata && <section className="wizard-step review-step"><span className="step-kicker">PASSO 5 DE 5</span><h1>Pronto para o processamento real</h1><p>O trabalho entrará na fila única do servidor e poderá levar vários minutos sem GPU.</p><div className="review-hero"><div className="review-art"><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} /><span><Play /></span></div><div><span>YouTube • {metadata.channel}</span><h2>{metadata.title}</h2><p>{metadata.canonicalUrl}</p></div></div><div className="review-grid"><button onClick={() => setWizardStep(1)}><span><Monitor /></span><div><small>FORMATO</small><strong>{format === "9:16" ? "Vertical 9:16" : "Horizontal 16:9"}</strong><em>{framingLabel(format === "16:9" ? "fit" : framing)}</em></div><ChevronRight /></button><button onClick={() => setWizardStep(2)}><span><Clock3 /></span><div><small>DURAÇÃO</small><strong>{clipDuration} segundos</strong><em>{analysisMinutes} minutos analisados</em></div><ChevronRight /></button><button onClick={() => setWizardStep(3)}><span><Captions /></span><div><small>LEGENDA</small><strong>{selectedCaption.label}</strong><em>Português automático</em></div><ChevronRight /></button><button onClick={() => setWizardStep(1)}><span><WandSparkles /></span><div><small>DIREÇÃO DA IA</small><strong>{prompt ? "Personalizada" : "Padrão"}</strong><em>{prompt.length} caracteres</em></div><ChevronRight /></button></div><div className="analysis-note"><Sparkles /><div><strong>Etapas reais</strong><p>Download autorizado, detecção de rosto, transcrição, seleção editorial e renderização com FFmpeg.</p></div></div>{inputError && <span className="field-error review-error">{inputError}</span>}</section>}
       </div>
       <div className="wizard-footer"><button className="back-button" onClick={() => wizardStep === 0 ? setWizardStep(null) : setWizardStep(wizardStep - 1)}>{wizardStep === 0 ? "Cancelar" : "Voltar"}</button><span>Nada será cobrado antes da conclusão.</span>{wizardStep < 4 ? <button className="primary-button" disabled={inspecting} onClick={() => void advanceWizard()}>{inspecting ? "Consultando..." : "Continuar"} <ArrowRight /></button> : <button className="primary-button launch-button" disabled={creating || !processorConfigured} onClick={() => void createProject()}><Sparkles /> {creating ? "Enviando..." : processorConfigured ? editingProjectId ? "Salvar e reprocessar" : "Iniciar análise real" : "Processador indisponível"}</button>}</div>
     </div>}

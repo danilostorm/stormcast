@@ -14,7 +14,7 @@ type ProjectRow = {
   analysis_seconds: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
-  framing: "fit" | "center";
+  framing: "auto" | "fit" | "center" | "split" | "spotlight";
   prompt: string;
   caption_style: string;
   thumbnail_url: string | null;
@@ -66,7 +66,7 @@ export type PublicProject = {
   analysisSeconds: number;
   requestedClipSeconds: number;
   format: "9:16" | "16:9";
-  framing: "fit" | "center";
+  framing: "auto" | "fit" | "center" | "split" | "spotlight";
   prompt: string;
   captionStyle: string;
   thumbnailUrl: string | null;

@@ -49,7 +49,7 @@ export const projects = sqliteTable(
     analysisSeconds: integer("analysis_seconds").notNull().default(0),
     requestedClipSeconds: integer("requested_clip_seconds").notNull().default(60),
     format: text("format", { enum: ["9:16", "16:9"] }).notNull().default("9:16"),
-    framing: text("framing", { enum: ["fit", "center"] }).notNull().default("fit"),
+    framing: text("framing", { enum: ["auto", "fit", "center", "split", "spotlight"] }).notNull().default("fit"),
     prompt: text("prompt").notNull().default(""),
     captionStyle: text("caption_style").notNull().default("impact"),
     thumbnailUrl: text("thumbnail_url"),

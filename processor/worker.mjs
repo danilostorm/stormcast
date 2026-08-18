@@ -10,6 +10,7 @@ import {
   cleanText,
   clipSelectionSchema,
   desiredClipCount,
+  focusCropExpression,
   normalizeClipCandidates,
   normalizeYouTubeUrl,
   transcriptForAnalysis,
@@ -23,6 +24,8 @@ const clipsRoot = resolve(mediaRoot, "clips");
 const ytDlpPath = process.env.STORMCAST_YTDLP_PATH || "yt-dlp";
 const ffmpegPath = process.env.STORMCAST_FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.STORMCAST_FFPROBE_PATH || "ffprobe";
+const pythonPath = process.env.STORMCAST_PYTHON_PATH || "/opt/stormcast-tools/bin/python";
+const faceTrackerPath = resolve(process.cwd(), "processor/focus.py");
 const transcriptionModel = process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1";
 const analysisModel = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-mini";
 const ffmpegThreads = integerEnv("STORMCAST_FFMPEG_THREADS", 8, 1, 16);
@@ -64,7 +67,7 @@ function schema(db) {
       source_platform TEXT NOT NULL DEFAULT 'YouTube', source_video_id TEXT NOT NULL,
       source_duration_seconds INTEGER NOT NULL DEFAULT 0, requested_analysis_minutes INTEGER NOT NULL,
       analysis_seconds INTEGER NOT NULL DEFAULT 0, requested_clip_seconds INTEGER NOT NULL DEFAULT 60,
-      format TEXT NOT NULL DEFAULT '9:16', framing TEXT NOT NULL DEFAULT 'fit', prompt TEXT NOT NULL DEFAULT '',
+      format TEXT NOT NULL DEFAULT '9:16', framing TEXT NOT NULL DEFAULT 'auto', prompt TEXT NOT NULL DEFAULT '',
       caption_style TEXT NOT NULL DEFAULT 'impact', thumbnail_url TEXT, status TEXT NOT NULL DEFAULT 'queued',
       stage TEXT NOT NULL DEFAULT 'Aguardando processador', progress INTEGER NOT NULL DEFAULT 0,
       error_message TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0, credits_charged INTEGER NOT NULL DEFAULT 0,
@@ -383,32 +386,67 @@ function escapedFilterPath(filePath) {
 }
 
 function subtitleStyle(style, format) {
-  const colors = {
-    impact: ["&H0000D7FF", "&H00101010"],
-    clean: ["&H00FFFFFF", "&H00101010"],
-    viral: ["&H00FFFFFF", "&H00A83B7A"],
-    neon: ["&H00FFFF66", "&H005A2010"],
-    focus: ["&H007DFFB0", "&H00101010"],
-    editorial: ["&H00FFFFFF", "&H00303030"],
+  const presets = {
+    impact: { primary: "&H0000D7FF", outline: "&H00101010", bold: 1, outlineSize: 3, shadow: 2 },
+    clean: { primary: "&H00FFFFFF", outline: "&H00101010", bold: 1, outlineSize: 2, shadow: 1 },
+    viral: { primary: "&H00FFFFFF", outline: "&H00351082", back: "&H00351082", bold: 1, outlineSize: 2, shadow: 1 },
+    neon: { primary: "&H006AFFBE", outline: "&H00411708", bold: 1, outlineSize: 3, shadow: 2 },
+    focus: { primary: "&H00B0FF7D", outline: "&H00101010", bold: 1, outlineSize: 3, shadow: 1 },
+    editorial: { primary: "&H00FFFFFF", outline: "&H00303030", font: "DejaVu Serif", bold: 0, italic: 1, outlineSize: 2, shadow: 1 },
+    gospel: { primary: "&H0059E6FF", outline: "&H00281606", font: "DejaVu Serif", bold: 1, outlineSize: 3, shadow: 2 },
+    news: { primary: "&H00FFFFFF", outline: "&H001E1E1E", back: "&H001E1E1E", bold: 1, borderStyle: 3, outlineSize: 1, shadow: 0 },
+    gaming: { primary: "&H00FFF36C", outline: "&H00851F6F", bold: 1, outlineSize: 3, shadow: 2 },
+    box: { primary: "&H00101010", outline: "&H00FFFFFF", back: "&H00FFFFFF", bold: 1, borderStyle: 3, outlineSize: 1, shadow: 0 },
+    minimal: { primary: "&H00FFFFFF", outline: "&H00000000", bold: 0, outlineSize: 1, shadow: 1 },
+    punch: { primary: "&H00FFFFFF", outline: "&H00101010", bold: 1, outlineSize: 4, shadow: 3 },
   };
-  const [primary, outline] = colors[style] || colors.impact;
+  const preset = presets[style] || presets.impact;
   // libass uses a virtual canvas (commonly 288 px high), so these values scale
   // to roughly 50 px on a 720x1280 vertical export.
   const fontSize = format === "9:16" ? 11 : 18;
   const marginVertical = format === "9:16" ? 38 : 18;
   const marginHorizontal = format === "9:16" ? 18 : 30;
-  return `FontName=DejaVu Sans,FontSize=${fontSize},Bold=1,PrimaryColour=${primary},OutlineColour=${outline},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginL=${marginHorizontal},MarginR=${marginHorizontal},MarginV=${marginVertical}`;
+  return `FontName=${preset.font || "DejaVu Sans"},FontSize=${fontSize},Bold=${preset.bold},Italic=${preset.italic || 0},PrimaryColour=${preset.primary},OutlineColour=${preset.outline},BackColour=${preset.back || "&H00101010"},BorderStyle=${preset.borderStyle || 1},Outline=${preset.outlineSize},Shadow=${preset.shadow},Alignment=2,MarginL=${marginHorizontal},MarginR=${marginHorizontal},MarginV=${marginVertical}`;
 }
 
-function videoFilter(job, subtitlePath) {
+function verticalCrop(focus = "0.5", widthRatio = "9/16") {
+  return `crop='ih*${widthRatio}':ih:'max(0,min(iw-ow,(${focus})*iw-ow/2))':0`;
+}
+
+function videoFilter(job, subtitlePath, focusSamples = []) {
   const subtitles = `subtitles='${escapedFilterPath(subtitlePath)}':force_style='${subtitleStyle(job.caption_style, job.format)}'`;
   if (job.format === "16:9") {
     return `[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,${subtitles}[v]`;
   }
   if (job.framing === "center") {
-    return `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,${subtitles}[v]`;
+    return `[0:v]${verticalCrop("0.5")},scale=720:1280,${subtitles}[v]`;
+  }
+  if (job.framing === "auto") {
+    return `[0:v]${verticalCrop(focusCropExpression(focusSamples))},scale=720:1280,${subtitles}[v]`;
+  }
+  if (job.framing === "split") {
+    return `[0:v]split=2[left][right];[left]crop=iw/2:ih:0:0,scale=720:640:force_original_aspect_ratio=increase,crop=720:640[leftv];[right]crop=iw/2:ih:iw/2:0,scale=720:640:force_original_aspect_ratio=increase,crop=720:640[rightv];[leftv][rightv]vstack=inputs=2,${subtitles}[v]`;
+  }
+  if (job.framing === "spotlight") {
+    const focus = focusCropExpression(focusSamples);
+    return `[0:v]split=2[face][full];[face]${verticalCrop(focus, "720/850")},scale=720:850[facev];[full]scale=720:430:force_original_aspect_ratio=decrease,pad=720:430:(ow-iw)/2:(oh-ih)/2:black[fullv];[facev][fullv]vstack=inputs=2,${subtitles}[v]`;
   }
   return `[0:v]split=2[bg][fg];[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=20:10[blur];[fg]scale=720:1280:force_original_aspect_ratio=decrease[front];[blur][front]overlay=(W-w)/2:(H-h)/2,${subtitles}[v]`;
+}
+
+async function detectFocusSamples(db, job, sourcePath, clip) {
+  if (job.format !== "9:16" || !["auto", "spotlight"].includes(job.framing)) return [];
+  try {
+    const result = await runCommand(db, job.id, pythonPath, [
+      faceTrackerPath, "--video", sourcePath, "--start", String(clip.startSeconds),
+      "--duration", String(clip.durationSeconds), "--samples", String(Math.min(24, Math.max(8, Math.ceil(clip.durationSeconds / 3)))),
+    ], { timeout: 8 * 60_000, maximumOutput: 512 * 1024 });
+    const payload = JSON.parse(result.stdout);
+    return Array.isArray(payload?.samples) ? payload.samples : [];
+  } catch (error) {
+    log("Foco automático indisponível; usando o centro:", error instanceof Error ? error.message : String(error));
+    return [];
+  }
 }
 
 async function renderClips(db, job, sourcePath, segments, clips, stagingDirectory) {
@@ -422,12 +460,13 @@ async function renderClips(db, job, sourcePath, segments, clips, stagingDirector
     const subtitlePath = join(stagingDirectory, `${base}.srt`);
     const videoPath = join(stagingDirectory, `${base}.mp4`);
     const posterPath = join(stagingDirectory, `${base}.jpg`);
-    const subtitle = buildSrt(segments, clip.startSeconds, clip.endSeconds);
+    const subtitle = buildSrt(segments, clip.startSeconds, clip.endSeconds, job.format === "9:16" ? 28 : 42);
     if (!subtitle) throw new Error(`Não há legenda sincronizada para o corte ${index + 1}.`);
     writeFileSync(subtitlePath, subtitle, { encoding: "utf8", mode: 0o640 });
+    const focusSamples = await detectFocusSamples(db, job, sourcePath, clip);
     await runCommand(db, job.id, ffmpegPath, [
       "-y", "-hide_banner", "-loglevel", "error", "-ss", String(clip.startSeconds),
-      "-t", String(clip.durationSeconds), "-i", sourcePath, "-filter_complex", videoFilter(job, subtitlePath),
+      "-t", String(clip.durationSeconds), "-i", sourcePath, "-filter_complex", videoFilter(job, subtitlePath, focusSamples),
       "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
       "-pix_fmt", "yuv420p", "-threads", String(ffmpegThreads), "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart", "-shortest", videoPath,
@@ -571,6 +610,7 @@ async function checkConfiguration() {
   db.close();
   let ytVersion = "indisponível";
   let ffmpegVersion = "indisponível";
+  let faceTracking = "fallback central";
   try { ytVersion = cleanText(await checkCommand(ytDlpPath, ["--version"]), "indisponível", 80); } catch { failures.push(`yt-dlp não encontrado em ${ytDlpPath}`); }
   try {
     ffmpegVersion = cleanText((await checkCommand(ffmpegPath, ["-version"])).split(/\r?\n/)[0], "indisponível", 120);
@@ -578,11 +618,16 @@ async function checkConfiguration() {
     if (!/\bsubtitles\b/.test(filters)) failures.push("FFmpeg foi instalado sem o filtro subtitles/libass");
   } catch { failures.push(`FFmpeg não encontrado em ${ffmpegPath}`); }
   try { await checkCommand(ffprobePath, ["-version"]); } catch { failures.push(`ffprobe não encontrado em ${ffprobePath}`); }
+  try {
+    const cvVersion = cleanText(await checkCommand(pythonPath, ["-c", "import cv2; print(cv2.__version__)"]), "ativo", 40);
+    faceTracking = `OpenCV ${cvVersion}`;
+  } catch { /* Optional: automatic framing safely falls back to the center. */ }
 
   log("Banco:", databasePath);
   log("Mídia:", mediaRoot);
   log("yt-dlp:", ytVersion);
   log("FFmpeg:", ffmpegVersion);
+  log("Enquadramento facial:", faceTracking);
   log("Modelos:", `${transcriptionModel} + ${analysisModel}`);
   const filesystem = statfsSync(mediaRoot);
   log("Disco livre:", `${(Number(filesystem.bavail) * Number(filesystem.bsize) / 1024 ** 3).toFixed(1)} GB (mínimo ${minimumFreeGigabytes} GB)`);

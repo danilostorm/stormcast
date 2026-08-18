@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildSrt,
   formatSrtTime,
+  focusCropExpression,
   normalizeClipCandidates,
   normalizeYouTubeUrl,
   transcriptForAnalysis,
@@ -19,6 +20,13 @@ test("normaliza somente links individuais do YouTube", () => {
   });
   assert.throws(() => normalizeYouTubeUrl("https://example.com/watch?v=dQw4w9WgXcQ"));
   assert.throws(() => normalizeYouTubeUrl("file:///etc/passwd"));
+});
+
+test("gera expressão de foco suave e limitada para o FFmpeg", () => {
+  assert.equal(focusCropExpression([]), "0.5");
+  assert.equal(focusCropExpression([{ t: 0, x: 1.4 }]), "0.92");
+  const expression = focusCropExpression([{ t: 0, x: 0.2 }, { t: 2, x: 0.8 }]);
+  assert.match(expression, /if\(lt\(t,2\),0\.2\+\(0\.8-0\.2\)/);
 });
 
 test("gera SRT relativo ao início do corte", () => {
