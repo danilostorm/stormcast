@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    if (runtimeValue("STORMCAST_DISABLE_REGISTRATION") === "1") {
+    const registrationSetting = await queryOne<{ value: string }>("SELECT value FROM app_settings WHERE key = 'registration_enabled' LIMIT 1");
+    if (registrationSetting?.value === "0" || (!registrationSetting && runtimeValue("STORMCAST_DISABLE_REGISTRATION") === "1")) {
       return NextResponse.json({ error: "Novos cadastros estão temporariamente fechados." }, { status: 403 });
     }
     if (!allowRequest(`register:${clientAddress(request)}`, 5, 60 * 60_000)) {
@@ -33,20 +34,22 @@ export async function POST(request: Request) {
     if (duplicate) return NextResponse.json({ error: "Já existe uma conta com este e-mail." }, { status: 409 });
 
     const now = Date.now();
+    const defaultCreditsSetting = await queryOne<{ value: string }>("SELECT value FROM app_settings WHERE key = 'default_credits' LIMIT 1");
+    const defaultCredits = Math.max(0, Math.min(100_000, Math.trunc(Number(defaultCreditsSetting?.value ?? 120) || 120)));
     const user = {
       id: randomToken(16),
       name,
       email,
       role: "user" as const,
       status: "active" as const,
-      credits: 120,
+      credits: defaultCredits,
       createdAt: now,
       lastLoginAt: now,
     };
     await execute(
       `INSERT INTO users (id, name, email, password_hash, role, status, credits, created_at, updated_at, last_login_at)
-       VALUES (?, ?, ?, ?, 'user', 'active', 120, ?, ?, ?)`,
-      [user.id, name, email, await hashPassword(password), now, now, now],
+       VALUES (?, ?, ?, ?, 'user', 'active', ?, ?, ?, ?)`,
+      [user.id, name, email, await hashPassword(password), defaultCredits, now, now, now],
     );
 
     const session = await createSession(user.id);

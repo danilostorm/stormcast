@@ -95,3 +95,9 @@ export const clips = sqliteTable(
     index("clips_user_idx").on(table.userId),
   ],
 );
+
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
