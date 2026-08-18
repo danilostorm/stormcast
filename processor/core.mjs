@@ -80,13 +80,13 @@ function captionLines(text, maximum = 42) {
   return lines.slice(0, 2).join("\n");
 }
 
-export function buildSrt(segments, clipStart, clipEnd) {
+export function buildSrt(segments, clipStart, clipEnd, maximumCharacters = 42) {
   const relevant = segments
     .filter((segment) => Number(segment.end) > clipStart && Number(segment.start) < clipEnd)
     .map((segment) => ({
       start: Math.max(0, Number(segment.start) - clipStart),
       end: Math.min(clipEnd, Number(segment.end)) - clipStart,
-      text: captionLines(segment.text),
+      text: captionLines(segment.text, maximumCharacters),
     }))
     .filter((segment) => segment.end > segment.start && segment.text);
 
@@ -153,4 +153,24 @@ export function normalizeClipCandidates(rawClips, segments, analysisSeconds, req
 export function desiredClipCount(analysisSeconds) {
   const minutes = Math.ceil(Math.max(1, Number(analysisSeconds) || 1) / 60);
   return minutes <= 20 ? 3 : minutes <= 60 ? 6 : 8;
+}
+
+export function focusCropExpression(samples) {
+  const points = (Array.isArray(samples) ? samples : [])
+    .map((sample) => ({ t: Number(sample?.t), x: Number(sample?.x) }))
+    .filter((sample) => Number.isFinite(sample.t) && sample.t >= 0 && Number.isFinite(sample.x))
+    .map((sample) => ({ t: Number(sample.t.toFixed(2)), x: Number(Math.max(0.08, Math.min(0.92, sample.x)).toFixed(4)) }))
+    .sort((left, right) => left.t - right.t)
+    .slice(0, 30);
+  if (!points.length) return "0.5";
+  if (points.length === 1) return String(points[0].x);
+  let expression = String(points.at(-1).x);
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const span = Math.max(0.01, next.t - current.t);
+    const interpolation = `${current.x}+(${next.x}-${current.x})*(t-${current.t})/${span.toFixed(2)}`;
+    expression = `if(lt(t,${next.t}),${interpolation},${expression})`;
+  }
+  return expression;
 }

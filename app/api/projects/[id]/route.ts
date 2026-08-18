@@ -16,7 +16,7 @@ type ProjectRow = {
   requested_analysis_minutes: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
-  framing: "fit" | "center";
+  framing: "auto" | "fit" | "center" | "split" | "spotlight";
   prompt: string;
   caption_style: string;
   thumbnail_url: string | null;
@@ -48,9 +48,11 @@ function normalizedSettings(row: ProjectRow, body: ProjectActionBody) {
     analysisMinutes,
     clipDuration: [30, 60, 90, 180].includes(clipDuration) ? clipDuration : 60,
     format: body.action === "update_and_retry" && body.format === "16:9" ? "16:9" : body.action === "update_and_retry" ? "9:16" : row.format,
-    framing: body.action === "update_and_retry" && body.framing === "center" ? "center" : body.action === "update_and_retry" ? "fit" : row.framing,
+    framing: body.action === "update_and_retry" && ["auto", "fit", "center", "split", "spotlight"].includes(String(body.framing))
+      ? String(body.framing)
+      : body.action === "update_and_retry" ? "auto" : row.framing,
     prompt: body.action === "update_and_retry" ? cleanText(body.prompt, 520) : row.prompt,
-    captionStyle: body.action === "update_and_retry" && ["impact", "clean", "viral", "neon", "focus", "editorial"].includes(String(body.captionStyle))
+    captionStyle: body.action === "update_and_retry" && ["impact", "clean", "viral", "neon", "focus", "editorial", "gospel", "news", "gaming", "box", "minimal", "punch"].includes(String(body.captionStyle))
       ? String(body.captionStyle)
       : row.caption_style,
   };

@@ -92,7 +92,7 @@ const schemaStatements = [
     analysis_seconds INTEGER NOT NULL DEFAULT 0,
     requested_clip_seconds INTEGER NOT NULL DEFAULT 60,
     format TEXT NOT NULL DEFAULT '9:16',
-    framing TEXT NOT NULL DEFAULT 'fit',
+    framing TEXT NOT NULL DEFAULT 'auto',
     prompt TEXT NOT NULL DEFAULT '',
     caption_style TEXT NOT NULL DEFAULT 'impact',
     thumbnail_url TEXT,

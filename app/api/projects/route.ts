@@ -79,9 +79,11 @@ export async function POST(request: Request) {
     }
 
     const format = body.format === "16:9" ? "16:9" : "9:16";
-    const framing = body.framing === "center" ? "center" : "fit";
+    const framing = ["auto", "fit", "center", "split", "spotlight"].includes(String(body.framing))
+      ? String(body.framing)
+      : "auto";
     const requestedClipSeconds = [30, 60, 90, 180].includes(Number(body.clipDuration)) ? Number(body.clipDuration) : 60;
-    const captionStyle = ["impact", "clean", "viral", "neon", "focus", "editorial"].includes(String(body.captionStyle))
+    const captionStyle = ["impact", "clean", "viral", "neon", "focus", "editorial", "gospel", "news", "gaming", "box", "minimal", "punch"].includes(String(body.captionStyle))
       ? String(body.captionStyle)
       : "impact";
     const title = cleanText(body.title, 180) || "Vídeo do YouTube";
