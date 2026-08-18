@@ -15,6 +15,8 @@ export const clipSelectionSchema = {
           caption: { type: "string", minLength: 3, maxLength: 360 },
           start_seconds: { type: "number", minimum: 0 },
           end_seconds: { type: "number", minimum: 1 },
+          complete_thought: { type: "boolean" },
+          ending_text: { type: "string", minLength: 3, maxLength: 240 },
           score: { type: "integer", minimum: 1, maximum: 100 },
           reason: { type: "string", minLength: 3, maxLength: 240 },
         },
@@ -24,6 +26,8 @@ export const clipSelectionSchema = {
           "caption",
           "start_seconds",
           "end_seconds",
+          "complete_thought",
+          "ending_text",
           "score",
           "reason",
         ],
@@ -281,11 +285,16 @@ export function normalizeClipCandidates(
   if (!Array.isArray(rawClips)) return [];
   const maximum = Math.max(1, Number(analysisSeconds) || 1);
   const target = Math.max(30, Math.min(180, Number(requestedSeconds) || 60));
+  const flexibleMaximum = Math.min(
+    240,
+    Math.max(target + 60, Math.round(target * 1.5)),
+  );
   const normalized = [];
 
   for (const raw of [...rawClips].sort(
     (left, right) => Number(right?.score || 0) - Number(left?.score || 0),
   )) {
+    if (raw?.complete_thought !== true) continue;
     let start = Number(raw?.start_seconds);
     let end = Number(raw?.end_seconds);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -298,22 +307,19 @@ export function normalizeClipCandidates(
     );
     if (nearStart && Math.abs(Number(nearStart.start) - start) <= 4)
       start = Math.max(0, Number(nearStart.start));
-    const nearEnd = [...segments]
-      .reverse()
-      .find(
-        (segment) =>
-          Number(segment.start) <= end && Number(segment.end) >= end - 4,
-      );
-    if (nearEnd && Math.abs(Number(nearEnd.end) - end) <= 4)
+    const nearEnd = segments.find(
+      (segment) => Number(segment.start) <= end && Number(segment.end) >= end,
+    );
+    if (
+      nearEnd &&
+      Number(nearEnd.end) - start <= flexibleMaximum &&
+      Number(nearEnd.end) > end
+    )
       end = Math.min(maximum, Number(nearEnd.end));
 
-    let duration = end - start;
+    const duration = end - start;
     if (duration < 20) continue;
-    if (duration > 180) end = Math.min(maximum, start + 180);
-    duration = end - start;
-    if (duration > target * 1.8 && target < 180)
-      end = Math.min(end, start + Math.max(target + 20, target * 1.35));
-    duration = end - start;
+    if (duration > flexibleMaximum) continue;
 
     const candidate = {
       title: cleanText(raw?.title, "Trecho em destaque", 90),
@@ -324,6 +330,7 @@ export function normalizeClipCandidates(
       ),
       caption: cleanText(raw?.caption, "Confira este trecho.", 360),
       reason: cleanText(raw?.reason, "Trecho claro e completo.", 240),
+      endingText: cleanText(raw?.ending_text, "Conclusão do trecho.", 240),
       startSeconds: Number(start.toFixed(3)),
       endSeconds: Number(end.toFixed(3)),
       durationSeconds: Number(duration.toFixed(3)),

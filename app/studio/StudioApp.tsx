@@ -2201,11 +2201,12 @@ export default function StudioApp({
                 <span className="step-kicker">PASSO 3 DE 5</span>
                 <h1>Ajuste a duração</h1>
                 <p>
-                  Defina o tamanho aproximado dos cortes e quanto do começo do
-                  vídeo será analisado.
+                  Defina o tempo-alvo dos cortes e quanto do começo do vídeo
+                  será analisado. O renderizador pode estender o corte para não
+                  interromper uma história ou explicação.
                 </p>
                 <div className="option-block">
-                  <label>Duração de cada corte</label>
+                  <label>Duração-alvo de cada corte</label>
                   <div className="duration-options">
                     {[
                       ["30", "30 seg"],
@@ -2573,8 +2574,8 @@ export default function StudioApp({
                       <Clock3 />
                     </span>
                     <div>
-                      <small>DURAÇÃO</small>
-                      <strong>{clipDuration} segundos</strong>
+                      <small>DURAÇÃO-ALVO</small>
+                      <strong>{clipDuration} segundos ou até concluir</strong>
                       <em>{analysisMinutes} minutos analisados</em>
                     </div>
                     <ChevronRight />
