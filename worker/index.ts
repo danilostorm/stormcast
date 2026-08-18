@@ -5,6 +5,11 @@ import handler from "vinext/server/app-router-entry";
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  STORMCAST_ADMIN_EMAIL?: string;
+  STORMCAST_ADMIN_PASSWORD?: string;
+  STORMCAST_ADMIN_NAME?: string;
+  STORMCAST_DISABLE_REGISTRATION?: string;
+  STORMCAST_SESSION_DAYS?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -27,6 +32,9 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Server-rendered routes access bindings through this request-scoped worker
+    // bootstrap. On the Ubuntu build, the application uses local SQLite instead.
+    (globalThis as typeof globalThis & { __STORMCAST_RUNTIME_ENV__?: Env }).__STORMCAST_RUNTIME_ENV__ = env;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
@@ -40,7 +48,16 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    const secured = new Response(response.body, response);
+    secured.headers.set("X-Content-Type-Options", "nosniff");
+    secured.headers.set("X-Frame-Options", "DENY");
+    secured.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    secured.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (request.headers.get("x-forwarded-proto") === "https" || url.protocol === "https:") {
+      secured.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    return secured;
   },
 };
 

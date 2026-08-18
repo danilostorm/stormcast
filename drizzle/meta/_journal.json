@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787065924529,
+      "tag": "0000_broad_star_brand",
+      "breakpoints": true
+    }
+  ]
 }

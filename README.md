@@ -1,60 +1,120 @@
-# StormCast AI
+# StormCast
 
-Uma experiência web para transformar podcasts, vídeos longos e transmissões em cortes prontos para Shorts, Reels e TikTok.
+Plataforma web para transformar podcasts, vídeos longos e transmissões em cortes para Shorts, Reels e TikTok.
 
-## O que já está funcionando
+## O que está disponível
 
-- dashboard responsivo com navegação lateral;
-- entrada por link do YouTube, Twitch, Kick ou Google Drive;
-- upload e leitura local de metadados de arquivos de vídeo;
-- fluxo de criação em cinco etapas;
-- escolha de proporção, enquadramento, duração e estilo de legenda;
-- prompt personalizado, incluindo uma direção pronta para conteúdo gospel;
-- demonstração completa da análise e geração de sugestões;
-- biblioteca persistida no navegador;
-- tela de resultados com viral score, prévia e cópia de legenda;
-- exportação do planejamento dos cortes em JSON;
-- painel de monitoramento de lives;
-- brand kit com cores, fonte e assinatura visual;
-- layout adaptado para desktop, tablet e celular.
+- landing page pública, responsiva e com identidade própria;
+- cadastro, login, logout e sessões persistidas no servidor;
+- senhas derivadas com PBKDF2-SHA256 e salt individual;
+- cookies de sessão `HttpOnly`, `SameSite=Lax` e `Secure` sob HTTPS;
+- estúdio protegido em `/app`;
+- área administrativa protegida em `/admin`;
+- gestão de usuários, funções, status e créditos;
+- banco SQLite local no Ubuntu e D1 na hospedagem Cloudflare;
+- projetos separados por conta no armazenamento do navegador;
+- fluxo de criação em cinco etapas, biblioteca, cortes, lives, Brand Kit e métricas;
+- cabeçalhos de segurança contra iframe, MIME sniffing e permissões desnecessárias.
 
-## Estado do produto
+## Limite atual do produto
 
-Esta entrega é um MVP funcional de interface. A análise exibida está identificada como modo de demonstração e gera sugestões realistas para validar todo o produto antes de ligar a infraestrutura de processamento.
-
-Para processar vídeos reais em produção, a próxima fase deve conectar:
-
-1. ingestão e armazenamento do vídeo;
-2. transcrição e diarização;
-3. análise semântica dos melhores momentos;
-4. enquadramento automático e renderização com FFmpeg;
-5. fila de trabalhos, créditos, usuários e cobrança.
+O fluxo do estúdio é um MVP funcional de interface. A análise e os resultados ainda operam em modo demonstrativo. A fase seguinte deve conectar ingestão, armazenamento, transcrição, análise semântica, filas e renderização com FFmpeg.
 
 ## Desenvolvimento
 
 Requer Node.js 22.13 ou superior.
 
 ```bash
-npm install
+npm ci
+cp .env.example .env
 npm run dev
 ```
 
-Validações:
+Para validar:
 
 ```bash
 npm run lint
 npm run build
+npm run test
 ```
+
+## Produção no Ubuntu 24.04
+
+O servidor precisa de um arquivo de ambiente fora do repositório e de um diretório persistente para o SQLite.
+
+1. Crie o diretório do banco para o mesmo usuário que executa o serviço:
+
+```bash
+sudo install -d -m 750 -o "$USER" -g "$USER" /var/lib/stormcast
+```
+
+2. Gere uma senha longa e aleatória:
+
+```bash
+openssl rand -base64 36
+```
+
+3. Crie `/etc/stormcast.env` como `root` e preencha os valores reais:
+
+```dotenv
+STORMCAST_ADMIN_NAME="Administrador StormCast"
+STORMCAST_ADMIN_EMAIL="seu-email@dominio.com"
+STORMCAST_ADMIN_PASSWORD="senha-longa-gerada-no-passo-anterior"
+STORMCAST_DB_PATH="/var/lib/stormcast/stormcast.db"
+STORMCAST_DISABLE_REGISTRATION="0"
+STORMCAST_SESSION_DAYS="30"
+```
+
+Proteja o arquivo:
+
+```bash
+sudo chown root:root /etc/stormcast.env
+sudo chmod 600 /etc/stormcast.env
+```
+
+4. O serviço `/etc/systemd/system/stormcast.service` deve conter `EnvironmentFile=/etc/stormcast.env`:
+
+```ini
+[Unit]
+Description=StormCast
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=SEU_USUARIO
+Group=SEU_USUARIO
+WorkingDirectory=/var/www/stormcast
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/stormcast.env
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+5. Atualize e reinicie:
+
+```bash
+cd /var/www/stormcast
+git pull --ff-only
+npm ci
+npm run lint
+npm run build
+sudo systemctl daemon-reload
+sudo systemctl restart stormcast
+sudo systemctl status stormcast --no-pager
+```
+
+Na primeira requisição, o usuário configurado por `STORMCAST_ADMIN_EMAIL` será criado ou promovido a administrador. Não publique a nova versão sem configurar essas variáveis.
 
 ## Stack
 
-- React 19
-- Next.js/Vinext
-- TypeScript
-- Tailwind CSS
+- React 19 e Next.js/Vinext
+- TypeScript e Tailwind CSS
+- Cloudflare Workers/D1 na hospedagem gerenciada
+- SQLite nativo do Node.js na instalação Ubuntu
 - Lucide Icons
-- Cloudflare Workers
-
----
-
-Criado para o projeto StormCast.
