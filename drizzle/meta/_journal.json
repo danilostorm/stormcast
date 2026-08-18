@@ -15,6 +15,13 @@
       "when": 1787070461650,
       "tag": "0001_fancy_morph",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787086982168,
+      "tag": "0002_absurd_night_nurse",
+      "breakpoints": true
     }
   ]
 }

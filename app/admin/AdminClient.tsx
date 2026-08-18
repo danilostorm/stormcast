@@ -1,156 +1,68 @@
 "use client";
 /* eslint-disable @next/next/no-html-link-for-pages -- native links avoid a Vinext dev hydration conflict */
-
-import {
-  Activity,
-  ArrowLeft,
-  CheckCircle2,
-  Coins,
-  LogOut,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  Sparkles,
-  UserCog,
-  Users,
-  UserX,
-} from "lucide-react";
+import { Activity, ArrowLeft, CheckCircle2, Coins, Database, FolderKanban, KeyRound, LogOut, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, Users, UserX, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AuthUser } from "../../lib/auth";
 
-type ManagedUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: "admin" | "user";
-  status: "active" | "suspended";
-  credits: number;
-  createdAt: number;
-  lastLoginAt: number | null;
-};
+type View="users"|"projects"|"system"|"security";
+type ManagedUser={id:string;name:string;email:string;role:"admin"|"user";status:"active"|"suspended";credits:number;createdAt:number;lastLoginAt:number|null;projectCount:number;clipCount:number;sessionCount:number};
+type Project={id:string;ownerName:string;ownerEmail:string;title:string;sourcePlatform:string;format:string;framing:string;status:string;stage:string;progress:number;creditsCharged:number;createdAt:number;clipCount:number;errorMessage:string|null};
+type SystemData={settings:{registrationEnabled:boolean;defaultCredits:number};processor:{enabled:boolean;analysisModel:string;transcriptionModel:string;mediaDirectory:string;ytdlpConfigured:boolean;ffmpegConfigured:boolean};projects:Record<string,number>;activeSessions:number;sessionDays:number};
+const activeStatuses=["queued","downloading","transcribing","analyzing","rendering"];
+function initials(name:string){return name.split(/\s+/).slice(0,2).map(p=>p[0]).join("").toUpperCase();}
+function date(value:number|null){return value?new Intl.DateTimeFormat("pt-BR",{dateStyle:"short",timeStyle:"short"}).format(new Date(value)):"Nunca";}
+function statusLabel(value:string){return ({queued:"Na fila",downloading:"Baixando",transcribing:"Transcrevendo",analyzing:"Analisando",rendering:"Renderizando",ready:"Pronto",failed:"Falhou",cancelled:"Cancelado"} as Record<string,string>)[value]||value;}
 
-function initials(name: string) {
-  return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
-}
-
-function date(value: number | null) {
-  if (!value) return "Nunca";
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
-}
-
-export default function AdminClient({ admin }: { admin: AuthUser }) {
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/admin/users", { cache: "no-store" });
-      const data = await response.json() as { users?: ManagedUser[]; error?: string };
-      if (!response.ok) throw new Error(data.error || "Falha ao carregar usuários.");
-      setUsers(data.users || []);
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "Falha ao carregar usuários.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/admin/users", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { users?: ManagedUser[]; error?: string };
-        if (!response.ok) throw new Error(data.error || "Falha ao carregar usuários.");
-        setUsers(data.users || []);
-      })
-      .catch((reason: unknown) => {
-        if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setMessage(reason instanceof Error ? reason.message : "Falha ao carregar usuários.");
-      })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, []);
-
-  const filtered = useMemo(() => users.filter((user) => `${user.name} ${user.email}`.toLowerCase().includes(query.toLowerCase())), [query, users]);
-  const summary = useMemo(() => ({
-    total: users.length,
-    active: users.filter((user) => user.status === "active").length,
-    admins: users.filter((user) => user.role === "admin").length,
-    credits: users.reduce((sum, user) => sum + user.credits, 0),
-  }), [users]);
-
-  async function action(user: ManagedUser, name: "activate" | "suspend" | "make_admin" | "make_user" | "add_credits", amount?: number) {
-    if (name === "suspend" && !window.confirm(`Suspender a conta de ${user.name}? A sessão atual será encerrada.`)) return;
-    setBusy(`${user.id}:${name}`);
-    setMessage("");
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, action: name, amount }),
-      });
-      const data = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Falha ao atualizar a conta.");
-      await loadUsers();
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "Falha ao atualizar a conta.");
-    } finally {
-      setBusy("");
-    }
+export default function AdminClient({admin}:{admin:AuthUser}){
+  const [view,setView]=useState<View>("users"),[users,setUsers]=useState<ManagedUser[]>([]),[projects,setProjects]=useState<Project[]>([]),[system,setSystem]=useState<SystemData|null>(null);
+  const [query,setQuery]=useState(""),[loading,setLoading]=useState(true),[busy,setBusy]=useState(""),[message,setMessage]=useState(""),[showCreate,setShowCreate]=useState(false);
+  const [newUser,setNewUser]=useState({name:"",email:"",password:"",credits:"120",role:"user"});
+  const load=useCallback(async()=>{
+    setLoading(true);setMessage("");
+    try{const paths=view==="users"?["users"]:view==="projects"?["projects"]:["system"];const response=await fetch(`/api/admin/${paths[0]}`,{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.error||"Falha ao carregar dados.");if(Array.isArray(data.users))setUsers(data.users);if(Array.isArray(data.projects))setProjects(data.projects);if(data.settings)setSystem(data);}
+    catch(reason){setMessage(reason instanceof Error?reason.message:"Falha ao carregar dados.");}finally{setLoading(false);}
+  },[view]);
+  useEffect(()=>{
+    // Loading here synchronizes the selected administrative view with the server.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  },[load]);
+  const filteredUsers=useMemo(()=>users.filter(u=>`${u.name} ${u.email}`.toLowerCase().includes(query.toLowerCase())),[users,query]);
+  const filteredProjects=useMemo(()=>projects.filter(p=>`${p.title} ${p.ownerName} ${p.ownerEmail} ${p.status}`.toLowerCase().includes(query.toLowerCase())),[projects,query]);
+  const userSummary=useMemo(()=>({total:users.length,active:users.filter(u=>u.status==="active").length,admins:users.filter(u=>u.role==="admin").length,credits:users.reduce((s,u)=>s+u.credits,0)}),[users]);
+  const projectSummary=useMemo(()=>({total:projects.length,active:projects.filter(p=>activeStatuses.includes(p.status)).length,ready:projects.filter(p=>p.status==="ready").length,clips:projects.reduce((s,p)=>s+p.clipCount,0)}),[projects]);
+  async function request(path:string,method:string,body:unknown){setBusy(path+JSON.stringify(body));setMessage("");try{const response=await fetch(path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.error||"Não foi possível concluir.");await load();return true;}catch(reason){setMessage(reason instanceof Error?reason.message:"Não foi possível concluir.");return false;}finally{setBusy("");}}
+  async function userAction(user:ManagedUser,action:string){
+    if(action==="suspend"&&!confirm(`Suspender ${user.name} e encerrar suas sessões?`))return;
+    if(action==="set_credits"){const value=prompt(`Novo saldo de créditos para ${user.name}:`,String(user.credits));if(value===null)return;await request("/api/admin/users","PATCH",{userId:user.id,action,amount:Number(value)});return;}
+    if(action==="reset_password"){const password=prompt(`Nova senha para ${user.name} (mínimo 10 caracteres, letras e números):`);if(!password)return;await request("/api/admin/users","PATCH",{userId:user.id,action,password});return;}
+    if(action==="update_profile"){const name=prompt("Nome:",user.name);if(!name)return;const email=prompt("E-mail:",user.email);if(!email)return;await request("/api/admin/users","PATCH",{userId:user.id,action,name,email});return;}
+    if(action==="logout_all"&&!confirm(`Encerrar todas as ${user.sessionCount} sessões de ${user.name}?`))return;
+    await request("/api/admin/users","PATCH",{userId:user.id,action});
   }
-
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.assign("/");
-  }
-
-  return (
-    <main className="admin-page">
-      <aside className="admin-sidebar">
-        <a href="/" className="admin-logo"><span className="brand-mark"><span /></span><span><strong>StormCast</strong><small>CONTROL ROOM</small></span></a>
-        <nav><span>GESTÃO</span><button className="active"><Users /> Usuários</button><a href="/app"><Sparkles /> Estúdio</a><span>SISTEMA</span><button><Activity /> Atividade</button><button><ShieldCheck /> Segurança</button></nav>
-        <div className="admin-account"><span>{initials(admin.name)}</span><div><strong>{admin.name}</strong><small>{admin.email}</small></div><button onClick={logout} aria-label="Sair"><LogOut /></button></div>
-      </aside>
-      <section className="admin-workspace">
-        <header className="admin-top"><div><a href="/app"><ArrowLeft /> Voltar ao estúdio</a><span>Administração</span></div><button onClick={loadUsers} disabled={loading}><RefreshCw className={loading ? "spin" : ""} /> Atualizar</button></header>
-        <div className="admin-content">
-          <div className="admin-title"><div><span>CONTROLE DE ACESSO</span><h1>Pessoas e permissões</h1><p>Gerencie contas, saldos e acesso administrativo do StormCast.</p></div><div className="admin-identity"><ShieldCheck /><span><small>SESSÃO ATUAL</small><strong>Administrador</strong></span></div></div>
-          <div className="admin-metrics">
-            <article><span><Users /></span><div><small>CONTAS</small><strong>{summary.total}</strong><em>cadastradas</em></div></article>
-            <article><span><CheckCircle2 /></span><div><small>ATIVAS</small><strong>{summary.active}</strong><em>{summary.total ? Math.round(summary.active / summary.total * 100) : 0}% da base</em></div></article>
-            <article><span><UserCog /></span><div><small>ADMINISTRADORES</small><strong>{summary.admins}</strong><em>com acesso elevado</em></div></article>
-            <article><span><Coins /></span><div><small>CRÉDITOS</small><strong>{summary.credits.toLocaleString("pt-BR")}</strong><em>distribuídos</em></div></article>
-          </div>
-          <section className="users-panel">
-            <div className="users-panel-head"><div><h2>Usuários</h2><span>{filtered.length} resultado{filtered.length === 1 ? "" : "s"}</span></div><label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar nome ou e-mail" /></label></div>
-            {message && <div className="admin-message">{message}</div>}
-            <div className="users-table-wrap">
-              <table className="users-table">
-                <thead><tr><th>Conta</th><th>Perfil</th><th>Status</th><th>Créditos</th><th>Último acesso</th><th>Ações</th></tr></thead>
-                <tbody>
-                  {filtered.map((user) => (
-                    <tr key={user.id}>
-                      <td><div className="table-person"><span>{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div></td>
-                      <td><span className={`role-pill role-${user.role}`}>{user.role === "admin" ? "Admin" : "Usuário"}</span></td>
-                      <td><span className={`status-dot status-${user.status}`}><i />{user.status === "active" ? "Ativa" : "Suspensa"}</span></td>
-                      <td><strong className="credit-count">{user.credits}</strong></td>
-                      <td><span className="last-seen">{date(user.lastLoginAt)}</span></td>
-                      <td><div className="row-actions"><button disabled={!!busy} onClick={() => action(user, "add_credits", 50)}><Coins /> +50</button><button disabled={!!busy || user.id === admin.id} onClick={() => action(user, user.role === "admin" ? "make_user" : "make_admin")}><UserCog /> {user.role === "admin" ? "Rebaixar" : "Admin"}</button><button className={user.status === "active" ? "danger" : "success"} disabled={!!busy || user.id === admin.id} onClick={() => action(user, user.status === "active" ? "suspend" : "activate")}>{user.status === "active" ? <UserX /> : <CheckCircle2 />}{user.status === "active" ? "Suspender" : "Ativar"}</button></div></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!loading && !filtered.length && <div className="admin-empty"><Users /><strong>Nenhuma conta encontrada</strong><span>Tente outro termo de busca.</span></div>}
-              {loading && <div className="admin-empty"><RefreshCw className="spin" /><strong>Carregando contas</strong></div>}
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
-  );
+  async function createUser(event:React.FormEvent){event.preventDefault();if(await request("/api/admin/users","POST",{...newUser,credits:Number(newUser.credits)})){setShowCreate(false);setNewUser({name:"",email:"",password:"",credits:"120",role:"user"});}}
+  async function deleteUser(user:ManagedUser){if(confirm(`Excluir definitivamente ${user.name}, seus projetos e cortes? Esta ação não pode ser desfeita.`))await request("/api/admin/users","DELETE",{userId:user.id});}
+  async function projectAction(project:Project,action:"cancel"|"delete"){if(!confirm(action==="cancel"?`Cancelar o processamento de “${project.title}”?`:`Excluir “${project.title}” e seus cortes?`))return;await request("/api/admin/projects",action==="delete"?"DELETE":"PATCH",{projectId:project.id,...(action==="cancel"?{action} : {})});}
+  async function saveSettings(event:React.FormEvent){event.preventDefault();if(system)await request("/api/admin/system","PATCH",system.settings);}
+  async function logout(){await fetch("/api/auth/logout",{method:"POST"});location.assign("/");}
+  const titles={users:["CONTROLE DE ACESSO","Pessoas e permissões","Crie contas, redefina senhas, controle saldos e acessos."],projects:["OPERAÇÃO E MÍDIA","Projetos e cortes","Acompanhe a fila, cancele processamentos e remova mídias."],system:["CONFIGURAÇÃO","Sistema e processador","Controle cadastros e confira a infraestrutura ativa."],security:["SEGURANÇA","Sessões e política de acesso","Visibilidade sobre sessões, senhas e proteção das contas."]};
+  const t=titles[view];
+  return <main className="admin-page">
+    <aside className="admin-sidebar"><a href="/" className="admin-logo"><span className="brand-mark"><span/></span><span><strong>StormCast</strong><small>CONTROL ROOM</small></span></a>
+      <nav><span>GESTÃO</span><button className={view==="users"?"active":""} onClick={()=>setView("users")}><Users/> Usuários</button><button className={view==="projects"?"active":""} onClick={()=>setView("projects")}><FolderKanban/> Projetos e mídia</button><a href="/app"><Sparkles/> Estúdio</a><span>SISTEMA</span><button className={view==="system"?"active":""} onClick={()=>setView("system")}><Activity/> Operação</button><button className={view==="security"?"active":""} onClick={()=>setView("security")}><ShieldCheck/> Segurança</button></nav>
+      <div className="admin-account"><span>{initials(admin.name)}</span><div><strong>{admin.name}</strong><small>{admin.email}</small></div><button onClick={logout} aria-label="Sair"><LogOut/></button></div>
+    </aside>
+    <section className="admin-workspace"><header className="admin-top"><div><a href="/app"><ArrowLeft/> Voltar ao estúdio</a><span>Administração</span></div><button onClick={load} disabled={loading}><RefreshCw className={loading?"spin":""}/> Atualizar</button></header>
+      <div className="admin-content"><div className="admin-title"><div><span>{t[0]}</span><h1>{t[1]}</h1><p>{t[2]}</p></div><div className="admin-identity"><ShieldCheck/><span><small>SESSÃO ATUAL</small><strong>Administrador</strong></span></div></div>
+        {message&&<div className="admin-message">{message}</div>}
+        {view==="users"&&<><div className="admin-metrics"><article><span><Users/></span><div><small>CONTAS</small><strong>{userSummary.total}</strong><em>cadastradas</em></div></article><article><span><CheckCircle2/></span><div><small>ATIVAS</small><strong>{userSummary.active}</strong><em>com acesso</em></div></article><article><span><UserCog/></span><div><small>ADMINISTRADORES</small><strong>{userSummary.admins}</strong><em>acesso elevado</em></div></article><article><span><Coins/></span><div><small>CRÉDITOS</small><strong>{userSummary.credits.toLocaleString("pt-BR")}</strong><em>distribuídos</em></div></article></div>
+          <section className="users-panel"><div className="users-panel-head"><div><h2>Usuários</h2><span>{filteredUsers.length} resultados</span></div><div className="admin-head-actions"><label><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar nome ou e-mail"/></label><button className="admin-primary" onClick={()=>setShowCreate(v=>!v)}><Plus/> Novo usuário</button></div></div>
+          {showCreate&&<form className="admin-create-form" onSubmit={createUser}><input required placeholder="Nome" value={newUser.name} onChange={e=>setNewUser({...newUser,name:e.target.value})}/><input required type="email" placeholder="E-mail" value={newUser.email} onChange={e=>setNewUser({...newUser,email:e.target.value})}/><input required type="password" placeholder="Senha segura" value={newUser.password} onChange={e=>setNewUser({...newUser,password:e.target.value})}/><input type="number" min="0" placeholder="Créditos" value={newUser.credits} onChange={e=>setNewUser({...newUser,credits:e.target.value})}/><select value={newUser.role} onChange={e=>setNewUser({...newUser,role:e.target.value})}><option value="user">Usuário</option><option value="admin">Administrador</option></select><button disabled={!!busy}>Criar conta</button></form>}
+          <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Conta</th><th>Perfil</th><th>Status</th><th>Créditos</th><th>Conteúdo</th><th>Último acesso</th><th>Ações</th></tr></thead><tbody>{filteredUsers.map(user=><tr key={user.id}><td><div className="table-person"><span>{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div></td><td><span className={`role-pill role-${user.role}`}>{user.role==="admin"?"Admin":"Usuário"}</span></td><td><span className={`status-dot status-${user.status}`}><i/>{user.status==="active"?"Ativa":"Suspensa"}</span></td><td><button className="inline-credit" onClick={()=>userAction(user,"set_credits")}>{user.credits} <Coins/></button></td><td><span className="last-seen">{user.projectCount} projetos · {user.clipCount} cortes<br/>{user.sessionCount} sessões</span></td><td><span className="last-seen">{date(user.lastLoginAt)}</span></td><td><div className="row-actions"><button onClick={()=>userAction(user,"update_profile")}><Settings2/> Editar</button><button onClick={()=>userAction(user,"reset_password")}><KeyRound/> Senha</button><button onClick={()=>userAction(user,"logout_all")}><LogOut/> Sessões</button><button disabled={user.id===admin.id} onClick={()=>userAction(user,user.role==="admin"?"make_user":"make_admin")}><UserCog/> Perfil</button><button className={user.status==="active"?"danger":"success"} disabled={user.id===admin.id} onClick={()=>userAction(user,user.status==="active"?"suspend":"activate")}>{user.status==="active"?<UserX/>:<CheckCircle2/>}{user.status==="active"?"Suspender":"Ativar"}</button><button className="danger" disabled={user.id===admin.id} onClick={()=>deleteUser(user)}><Trash2/> Excluir</button></div></td></tr>)}</tbody></table>{loading&&<div className="admin-empty"><RefreshCw className="spin"/><strong>Carregando contas</strong></div>}{!loading&&!filteredUsers.length&&<div className="admin-empty"><Users/><strong>Nenhuma conta encontrada</strong></div>}</div></section></>}
+        {view==="projects"&&<><div className="admin-metrics"><article><span><FolderKanban/></span><div><small>PROJETOS</small><strong>{projectSummary.total}</strong><em>na plataforma</em></div></article><article><span><Activity/></span><div><small>EM PROCESSAMENTO</small><strong>{projectSummary.active}</strong><em>fila ativa</em></div></article><article><span><CheckCircle2/></span><div><small>PRONTOS</small><strong>{projectSummary.ready}</strong><em>concluídos</em></div></article><article><span><Sparkles/></span><div><small>CORTES</small><strong>{projectSummary.clips}</strong><em>arquivos gerados</em></div></article></div><section className="users-panel"><div className="users-panel-head"><div><h2>Projetos e mídia</h2><span>{filteredProjects.length} resultados</span></div><label><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar projeto, usuário ou status"/></label></div><div className="users-table-wrap"><table className="users-table projects-admin-table"><thead><tr><th>Projeto</th><th>Proprietário</th><th>Formato</th><th>Status</th><th>Cortes</th><th>Créditos</th><th>Criado</th><th>Ações</th></tr></thead><tbody>{filteredProjects.map(p=><tr key={p.id}><td><strong>{p.title}</strong><small>{p.sourcePlatform}</small></td><td><strong>{p.ownerName}</strong><small>{p.ownerEmail}</small></td><td>{p.format} · {p.framing}</td><td><span className={`project-status status-${p.status}`}>{statusLabel(p.status)}</span><small>{p.stage} · {p.progress}%</small></td><td>{p.clipCount}</td><td>{p.creditsCharged}</td><td><span className="last-seen">{date(p.createdAt)}</span></td><td><div className="row-actions">{activeStatuses.includes(p.status)&&<button className="danger" onClick={()=>projectAction(p,"cancel")}><XCircle/> Cancelar</button>}{!activeStatuses.includes(p.status)&&<button className="danger" onClick={()=>projectAction(p,"delete")}><Trash2/> Excluir mídia</button>}</div></td></tr>)}</tbody></table>{loading&&<div className="admin-empty"><RefreshCw className="spin"/><strong>Carregando projetos</strong></div>}</div></section></>}
+        {view==="system"&&system&&<><div className="admin-metrics"><article><span><Activity/></span><div><small>PROCESSADOR</small><strong>{system.processor.enabled?"Ativo":"Pausado"}</strong><em>configuração do worker</em></div></article><article><span><Database/></span><div><small>FILA</small><strong>{Object.entries(system.projects).filter(([k])=>activeStatuses.includes(k)).reduce((s,[,v])=>s+v,0)}</strong><em>projetos ativos</em></div></article><article><span><ShieldCheck/></span><div><small>SESSÕES</small><strong>{system.activeSessions}</strong><em>ativas agora</em></div></article><article><span><Users/></span><div><small>CADASTROS</small><strong>{system.settings.registrationEnabled?"Abertos":"Fechados"}</strong><em>controle público</em></div></article></div><div className="admin-system-grid"><form className="admin-card" onSubmit={saveSettings}><span>FRONTEND E CONTAS</span><h2>Novos cadastros</h2><label className="admin-toggle"><input type="checkbox" checked={system.settings.registrationEnabled} onChange={e=>setSystem({...system,settings:{...system.settings,registrationEnabled:e.target.checked}})}/><i/><div><strong>Permitir cadastro público</strong><small>Quando desligado, somente administradores criam contas.</small></div></label><label className="admin-field">Créditos iniciais<input type="number" min="0" max="100000" value={system.settings.defaultCredits} onChange={e=>setSystem({...system,settings:{...system.settings,defaultCredits:Number(e.target.value)}})}/><small>Saldo entregue automaticamente a cada nova conta.</small></label><button className="admin-primary" disabled={!!busy}>Salvar configurações</button></form><section className="admin-card"><span>PROCESSADOR</span><h2>Ambiente atual</h2><dl><div><dt>Análise</dt><dd>{system.processor.analysisModel}</dd></div><div><dt>Transcrição</dt><dd>{system.processor.transcriptionModel}</dd></div><div><dt>yt-dlp</dt><dd>{system.processor.ytdlpConfigured?"Configurado":"Padrão do PATH"}</dd></div><div><dt>FFmpeg</dt><dd>{system.processor.ffmpegConfigured?"Configurado":"Padrão do PATH"}</dd></div><div><dt>Diretório de mídia</dt><dd>{system.processor.mediaDirectory}</dd></div></dl><p>Modelos, caminhos e pausa do processador continuam protegidos no arquivo de ambiente do servidor.</p></section></div></>}
+        {view==="security"&&<div className="admin-system-grid security-grid"><section className="admin-card"><span>POLÍTICA DE SENHAS</span><h2>Proteção de contas</h2><div className="security-feature"><KeyRound/><div><strong>Senhas com PBKDF2-SHA256</strong><small>Mínimo de 10 caracteres, contendo letras e números.</small></div></div><div className="security-feature"><ShieldCheck/><div><strong>240 mil iterações</strong><small>Hash com salt individual para cada usuário.</small></div></div><div className="security-feature"><LogOut/><div><strong>Revogação imediata</strong><small>Trocar a senha ou suspender a conta encerra todas as sessões.</small></div></div></section><section className="admin-card"><span>SESSÕES</span><h2>Controles disponíveis</h2><strong className="security-number">{system?.activeSessions??"—"}</strong><p>sessões ativas na plataforma. Cada conta pode ter suas sessões encerradas pela aba Usuários.</p><p>Validade configurada: <b>{system?.sessionDays??30} dias</b>. A sessão do administrador atual é protegida contra suspensão, rebaixamento e exclusão acidental.</p></section></div>}
+      </div>
+    </section>
+  </main>;
 }
