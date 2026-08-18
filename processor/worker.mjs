@@ -23,6 +23,7 @@ import {
   focusCropExpression,
   normalizeClipCandidates,
   normalizeYouTubeUrl,
+  shouldTranscribeAudio,
   transcriptForAnalysis,
 } from "./core.mjs";
 
@@ -35,6 +36,7 @@ const mediaRoot = resolve(
 );
 const workRoot = resolve(mediaRoot, "work");
 const clipsRoot = resolve(mediaRoot, "clips");
+const transcriptsRoot = resolve(mediaRoot, "transcripts");
 const ytDlpPath = process.env.STORMCAST_YTDLP_PATH || "yt-dlp";
 const ffmpegPath = process.env.STORMCAST_FFMPEG_PATH || "ffmpeg";
 const ffprobePath = process.env.STORMCAST_FFPROBE_PATH || "ffprobe";
@@ -697,10 +699,93 @@ async function extractAudio(
   return files;
 }
 
+function transcriptCachePath(job) {
+  const userRoot = resolve(transcriptsRoot, job.user_id);
+  const target = resolve(userRoot, `${job.id}.json`);
+  if (!target.startsWith(userRoot + sep))
+    throw new Error("Identificador de cache de transcrição inválido.");
+  return target;
+}
+
+function readTranscriptCache(job) {
+  const target = transcriptCachePath(job);
+  if (!existsSync(target)) return { segments: [], completedChunks: [] };
+  try {
+    const cached = JSON.parse(readFileSync(target, "utf8"));
+    if (
+      cached.sourceVideoId !== job.source_video_id ||
+      Number(cached.analysisSeconds) !== Number(job.analysis_seconds) ||
+      cached.model !== transcriptionModel ||
+      !Array.isArray(cached.segments) ||
+      !Array.isArray(cached.completedChunks)
+    ) {
+      return { segments: [], completedChunks: [] };
+    }
+    return {
+      segments: cached.segments,
+      completedChunks: cached.completedChunks
+        .map(Number)
+        .filter((value) => Number.isInteger(value) && value >= 0),
+    };
+  } catch {
+    rmSync(target, { force: true });
+    return { segments: [], completedChunks: [] };
+  }
+}
+
+function writeTranscriptCache(job, segments, completedChunks) {
+  const target = transcriptCachePath(job);
+  mkdirSync(dirname(target), { recursive: true, mode: 0o750 });
+  const temporary = `${target}.${process.pid}.tmp`;
+  writeFileSync(
+    temporary,
+    JSON.stringify({
+      version: 1,
+      sourceVideoId: job.source_video_id,
+      analysisSeconds: Number(job.analysis_seconds),
+      model: transcriptionModel,
+      completedChunks: [...completedChunks].sort((left, right) => left - right),
+      segments,
+      updatedAt: Date.now(),
+    }),
+    { encoding: "utf8", mode: 0o640 },
+  );
+  renameSync(temporary, target);
+}
+
+async function audioDuration(db, job, filePath) {
+  const result = await runCommand(
+    db,
+    job.id,
+    ffprobePath,
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ],
+    { timeout: 60_000, maximumOutput: 64 * 1024 },
+  );
+  return Number(result.stdout.trim());
+}
+
 async function transcribe(db, job, audioFiles) {
-  const segments = [];
+  const cached = readTranscriptCache(job);
+  const segments = [...cached.segments];
+  const completedChunks = new Set(cached.completedChunks);
+  if (completedChunks.size)
+    log(
+      "Transcrição reaproveitada:",
+      `${completedChunks.size} fragmento(s) já concluído(s).`,
+    );
   for (let index = 0; index < audioFiles.length; index += 1) {
     assertContinuing(db, job.id);
+    const nameMatch = /audio-(\d{3})\.mp3$/.exec(audioFiles[index]);
+    const chunkIndex = nameMatch ? Number(nameMatch[1]) : index;
+    if (completedChunks.has(chunkIndex)) continue;
     const progress = 28 + (index / audioFiles.length) * 28;
     updateProject(
       db,
@@ -714,6 +799,16 @@ async function transcribe(db, job, audioFiles) {
       throw new Error(
         "Um trecho de áudio ultrapassou o limite de 25 MB da transcrição.",
       );
+    const duration = await audioDuration(db, job, audioFiles[index]);
+    if (!shouldTranscribeAudio(duration, bytes.byteLength)) {
+      completedChunks.add(chunkIndex);
+      writeTranscriptCache(job, segments, completedChunks);
+      log(
+        "Fragmento de áudio ignorado:",
+        `${chunkIndex + 1} (${Number.isFinite(duration) ? duration.toFixed(3) : "inválido"}s).`,
+      );
+      continue;
+    }
     const form = new FormData();
     form.append(
       "file",
@@ -725,11 +820,29 @@ async function transcribe(db, job, audioFiles) {
     form.append("response_format", "verbose_json");
     form.append("timestamp_granularities[]", "segment");
     form.append("timestamp_granularities[]", "word");
-    const payload = await openAiRequest(db, job.id, "/audio/transcriptions", {
-      body: form,
-      timeout: 40 * 60_000,
-    });
-    const offset = index * 900;
+    let payload;
+    try {
+      payload = await openAiRequest(db, job.id, "/audio/transcriptions", {
+        body: form,
+        timeout: 40 * 60_000,
+      });
+    } catch (error) {
+      if (
+        /audio file is too short|minimum audio length/i.test(
+          error instanceof Error ? error.message : String(error),
+        )
+      ) {
+        completedChunks.add(chunkIndex);
+        writeTranscriptCache(job, segments, completedChunks);
+        log(
+          "Fragmento curto recusado pela OpenAI e ignorado:",
+          String(chunkIndex + 1),
+        );
+        continue;
+      }
+      throw error;
+    }
+    const offset = chunkIndex * 900;
     for (const segment of payload?.segments || []) {
       const start = Number(segment.start) + offset;
       const end = Number(segment.end) + offset;
@@ -753,6 +866,8 @@ async function transcribe(db, job, audioFiles) {
       )
         segment.words.push({ word: text, start, end });
     }
+    completedChunks.add(chunkIndex);
+    writeTranscriptCache(job, segments, completedChunks);
   }
   if (!segments.length)
     throw new Error(
@@ -1186,6 +1301,7 @@ async function processJob(db, claimed) {
     );
     assertContinuing(db, actualJob.id);
     completeProject(db, actualJob, rendered, stagingDirectory);
+    rmSync(transcriptCachePath(actualJob), { force: true });
     log("Projeto concluído:", `${actualJob.id} (${rendered.length} cortes)`);
   } catch (error) {
     rmSync(finalDirectory, { recursive: true, force: true });
@@ -1253,6 +1369,7 @@ async function checkConfiguration() {
   if (!openAiKey) failures.push("OPENAI_API_KEY não foi definida");
   mkdirSync(workRoot, { recursive: true, mode: 0o750 });
   mkdirSync(clipsRoot, { recursive: true, mode: 0o750 });
+  mkdirSync(transcriptsRoot, { recursive: true, mode: 0o750 });
   const db = openDatabase();
   db.prepare("SELECT 1").get();
   db.close();
@@ -1361,6 +1478,7 @@ async function main() {
     throw new Error("Defina OPENAI_API_KEY antes de iniciar o worker.");
   mkdirSync(workRoot, { recursive: true, mode: 0o750 });
   mkdirSync(clipsRoot, { recursive: true, mode: 0o750 });
+  mkdirSync(transcriptsRoot, { recursive: true, mode: 0o750 });
   const db = openDatabase();
   recoverInterrupted(db);
   processorState(db, "status", "running");

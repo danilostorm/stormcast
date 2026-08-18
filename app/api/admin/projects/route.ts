@@ -151,6 +151,7 @@ export async function DELETE(request: Request) {
       for (const target of [
         path.resolve(media, "clips", owner.user_id, projectId),
         path.resolve(media, "work", projectId),
+        path.resolve(media, "transcripts", owner.user_id, `${projectId}.json`),
       ])
         if (target.startsWith(media + path.sep))
           try {
