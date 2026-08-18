@@ -1,8 +1,60 @@
 import { assertSameOrigin, userFromRequest } from "../../../../lib/auth";
 import { execute, queryOne, runtimeValue } from "../../../../lib/database";
 import { getProject } from "../../../../lib/projects";
+import { randomToken } from "../../../../lib/security";
+import { processorConfigured } from "../../../../lib/youtube";
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+type ProjectRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  source_url: string;
+  source_video_id: string;
+  source_duration_seconds: number;
+  requested_analysis_minutes: number;
+  requested_clip_seconds: number;
+  format: "9:16" | "16:9";
+  framing: "fit" | "center";
+  prompt: string;
+  caption_style: string;
+  thumbnail_url: string | null;
+  status: string;
+};
+
+type ProjectActionBody = {
+  action?: "retry" | "duplicate" | "update_and_retry";
+  analysisMinutes?: unknown;
+  clipDuration?: unknown;
+  format?: unknown;
+  framing?: unknown;
+  prompt?: unknown;
+  captionStyle?: unknown;
+};
+
+function cleanText(value: unknown, maximum: number) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, maximum);
+}
+
+function normalizedSettings(row: ProjectRow, body: ProjectActionBody) {
+  const analysisMinutes = body.action === "update_and_retry" ? Math.floor(Number(body.analysisMinutes)) : Number(row.requested_analysis_minutes);
+  const clipDuration = body.action === "update_and_retry" ? Number(body.clipDuration) : Number(row.requested_clip_seconds);
+  if (!Number.isFinite(analysisMinutes) || analysisMinutes < 1 || analysisMinutes > 90 || analysisMinutes * 60 > Number(row.source_duration_seconds) + 59) {
+    throw new Error("O intervalo de análise não é válido para este vídeo.");
+  }
+  return {
+    analysisMinutes,
+    clipDuration: [30, 60, 90, 180].includes(clipDuration) ? clipDuration : 60,
+    format: body.action === "update_and_retry" && body.format === "16:9" ? "16:9" : body.action === "update_and_retry" ? "9:16" : row.format,
+    framing: body.action === "update_and_retry" && body.framing === "center" ? "center" : body.action === "update_and_retry" ? "fit" : row.framing,
+    prompt: body.action === "update_and_retry" ? cleanText(body.prompt, 520) : row.prompt,
+    captionStyle: body.action === "update_and_retry" && ["impact", "clean", "viral", "neon", "focus", "editorial"].includes(String(body.captionStyle))
+      ? String(body.captionStyle)
+      : row.caption_style,
+  };
+}
 
 export async function GET(request: Request, context: RouteContext) {
   const user = await userFromRequest(request);
@@ -11,6 +63,73 @@ export async function GET(request: Request, context: RouteContext) {
   const project = await getProject(user.id, id);
   if (!project) return Response.json({ error: "Projeto não encontrado." }, { status: 404 });
   return Response.json({ project });
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  try {
+    assertSameOrigin(request);
+    const user = await userFromRequest(request);
+    if (!user) return Response.json({ error: "Faça login novamente." }, { status: 401 });
+    if (!processorConfigured()) return Response.json({ error: "O processador não está disponível no momento." }, { status: 503 });
+    const { id } = await context.params;
+    const body = await request.json().catch(() => null) as ProjectActionBody | null;
+    if (!body || !["retry", "duplicate", "update_and_retry"].includes(String(body.action))) {
+      return Response.json({ error: "Ação de projeto inválida." }, { status: 400 });
+    }
+    const row = await queryOne<ProjectRow>(
+      `SELECT id, user_id, title, source_url, source_video_id, source_duration_seconds,
+        requested_analysis_minutes, requested_clip_seconds, format, framing, prompt,
+        caption_style, thumbnail_url, status
+       FROM projects WHERE id = ? AND user_id = ? LIMIT 1`,
+      [id, user.id],
+    );
+    if (!row) return Response.json({ error: "Projeto não encontrado." }, { status: 404 });
+    if (body.action !== "duplicate" && !["failed", "cancelled"].includes(row.status)) {
+      return Response.json({ error: "Somente projetos com falha ou cancelados podem ser reprocessados." }, { status: 409 });
+    }
+    if (body.action === "duplicate" && !["ready", "failed", "cancelled"].includes(row.status)) {
+      return Response.json({ error: "Aguarde o processamento atual terminar antes de duplicar." }, { status: 409 });
+    }
+    const active = await queryOne<{ id: string }>(
+      `SELECT id FROM projects WHERE user_id = ? AND status IN ('queued', 'downloading', 'transcribing', 'analyzing', 'rendering') LIMIT 1`,
+      [user.id],
+    );
+    if (active) return Response.json({ error: "Você já possui um vídeo em processamento. Aguarde ou cancele o trabalho atual." }, { status: 409 });
+
+    const settings = normalizedSettings(row, body);
+    if (user.credits < settings.analysisMinutes) {
+      return Response.json({ error: `Saldo insuficiente. Este processamento exige até ${settings.analysisMinutes} créditos.` }, { status: 402 });
+    }
+    const now = Date.now();
+
+    if (body.action === "duplicate") {
+      const newId = randomToken(16);
+      await execute(
+        `INSERT INTO projects (
+          id, user_id, title, source_url, source_platform, source_video_id, source_duration_seconds,
+          requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style,
+          thumbnail_url, status, stage, progress, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
+        [newId, user.id, row.title, row.source_url, row.source_video_id, row.source_duration_seconds,
+          settings.analysisMinutes, settings.clipDuration, settings.format, settings.framing, settings.prompt,
+          settings.captionStyle, row.thumbnail_url, now, now],
+      );
+      return Response.json({ project: await getProject(user.id, newId), duplicated: true }, { status: 201 });
+    }
+
+    await execute("DELETE FROM clips WHERE project_id = ? AND user_id = ?", [id, user.id]);
+    await execute(
+      `UPDATE projects SET requested_analysis_minutes = ?, analysis_seconds = 0, requested_clip_seconds = ?,
+        format = ?, framing = ?, prompt = ?, caption_style = ?, status = 'queued', stage = 'Aguardando processador',
+        progress = 1, error_message = NULL, cancel_requested = 0, credits_charged = 0,
+        started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [settings.analysisMinutes, settings.clipDuration, settings.format, settings.framing, settings.prompt,
+        settings.captionStyle, now, id, user.id],
+    );
+    return Response.json({ project: await getProject(user.id, id), retried: true });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Não foi possível reutilizar o projeto." }, { status: 400 });
+  }
 }
 
 export async function DELETE(request: Request, context: RouteContext) {

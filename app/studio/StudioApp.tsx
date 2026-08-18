@@ -4,9 +4,9 @@
 
 import {
   ArrowLeft, ArrowRight, BarChart3, Bell, Captions, Check, ChevronRight, CircleHelp,
-  Clock3, Copy, CreditCard, Download, FolderOpen, Frame, Home, Link2, LogOut, Menu,
+  Clock3, Copy, CopyPlus, CreditCard, Download, FolderOpen, Frame, Home, Link2, LogOut, Menu,
   Monitor, Palette, PanelLeftClose, Play, Plus, Radio, Search, Settings, ShieldCheck,
-  Sparkles, Trash2, Video, WandSparkles, X, type LucideIcon,
+  Sparkles, Pencil, RotateCcw, Trash2, Video, WandSparkles, X, type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -22,7 +22,7 @@ type Project = {
   id: string; title: string; platform: string; sourceUrl: string; sourceVideoId: string;
   sourceDurationSeconds: number; requestedAnalysisMinutes: number; analysisSeconds: number;
   requestedClipSeconds: number; format: "9:16" | "16:9"; framing: "fit" | "center";
-  captionStyle: string; thumbnailUrl: string | null; status: ProjectStatus; stage: string;
+  prompt: string; captionStyle: string; thumbnailUrl: string | null; status: ProjectStatus; stage: string;
   progress: number; error: string | null; creditsCharged: number; createdAt: number;
   updatedAt: number; completedAt: number | null; clips: Clip[];
 };
@@ -64,6 +64,17 @@ function statusLabel(status: ProjectStatus) {
   return labels[status];
 }
 
+function friendlyProjectError(message: string | null) {
+  if (!message) return "O servidor encerrou o trabalho sem cobrar créditos.";
+  if (/OpenAI \(429\)|no credits remaining|insufficient_quota|billing/i.test(message)) {
+    return "A conta da OpenAI estava sem saldo. Adicione créditos na API e reprocese este mesmo projeto.";
+  }
+  if (/HTTP (Error )?403|403 Forbidden|ffmpeg exited with code 8/i.test(message)) {
+    return "O YouTube recusou temporariamente o download. O projeto pode ser reprocessado depois da correção do yt-dlp.";
+  }
+  return message;
+}
+
 function VisualArt({ compact = false }: { compact?: boolean }) {
   return <div className={`visual-art theme-violet${compact ? " visual-art-compact" : ""}`} aria-hidden="true">
     <div className="visual-orbit orbit-one" /><div className="visual-orbit orbit-two" />
@@ -77,13 +88,30 @@ function SourcePicture({ src, alt, compact = false }: { src: string | null; alt:
   return src ? <img className={`source-picture${compact ? " source-picture-compact" : ""}`} src={src} alt={alt} /> : <VisualArt compact={compact} />;
 }
 
-function ProjectCard({ project, onOpen, onRemove }: { project: Project; onOpen: () => void; onRemove: () => void }) {
+function ProjectCard({ project, selected, onSelect, onOpen, onRetry, onEdit, onDuplicate, onCancel, onRemove }: {
+  project: Project;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onRetry: () => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
   const bestScore = Math.max(0, ...project.clips.map((clip) => clip.score));
   const terminal = ["ready", "failed", "cancelled"].includes(project.status);
+  const reusable = ["failed", "cancelled"].includes(project.status);
   return <div className="project-card-shell"><button className="project-card" onClick={onOpen}>
       <div className="project-cover"><SourcePicture src={project.thumbnailUrl} alt={`Capa de ${project.title}`} compact />{bestScore > 0 && <span className="score-chip"><Sparkles size={13} /> {bestScore}</span>}<span className="project-format">{project.format}</span>{project.status !== "ready" && <span className={`project-status status-${project.status}`}>{statusLabel(project.status)}{activeStatuses.includes(project.status) ? ` ${project.progress}%` : ""}</span>}</div>
       <div className="project-card-body"><div className="project-source"><i />{project.platform}</div><h3>{project.title}</h3><div className="project-meta"><span>{project.clips.length} cortes reais</span><span>{formatDate(project.createdAt)}</span></div></div>
-    </button>{terminal && <button className="project-remove" onClick={onRemove} aria-label={`Excluir ${project.title}`} title="Excluir projeto e arquivos"><Trash2 /></button>}</div>;
+    </button>{terminal && <button className={`project-select${selected ? " selected" : ""}`} onClick={onSelect} aria-label={selected ? "Remover da seleção" : "Selecionar projeto"}>{selected ? <Check /> : <span />}</button>}<div className="project-quick-actions">
+      {reusable && <button className="project-action-primary" onClick={onRetry}><RotateCcw /> Reprocessar</button>}
+      {reusable && <button onClick={onEdit}><Pencil /> Editar</button>}
+      {terminal && <button onClick={onDuplicate}><CopyPlus /> Duplicar</button>}
+      {activeStatuses.includes(project.status) && <button className="danger" onClick={onCancel}><X /> Cancelar</button>}
+      {terminal && <button className="danger icon-only" onClick={onRemove} aria-label={`Excluir ${project.title}`} title="Excluir projeto e arquivos"><Trash2 /></button>}
+    </div></div>;
 }
 
 const nav: { label: string; items: { id: View; label: string; Icon: LucideIcon; badge?: string }[] }[] = [
@@ -121,6 +149,11 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
   const [copied, setCopied] = useState("");
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "ready" | "failed" | "cancelled">("all");
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [projectActionBusy, setProjectActionBusy] = useState<string | null>(null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [actionNotice, setActionNotice] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [processorConfigured, setProcessorConfigured] = useState(false);
@@ -136,7 +169,20 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   const readyProjects = projects.filter((project) => project.status === "ready");
   const allClips = readyProjects.flatMap((project) => project.clips);
   const averageScore = allClips.length ? Math.round(allClips.reduce((sum, clip) => sum + clip.score, 0) / allClips.length) : 0;
-  const filteredProjects = projects.filter((project) => `${project.title} ${project.platform}`.toLowerCase().includes(query.toLowerCase()));
+  const filteredProjects = projects.filter((project) => {
+    const matchesSearch = `${project.title} ${project.platform}`.toLowerCase().includes(query.toLowerCase());
+    const matchesStatus = statusFilter === "all" ? true
+      : statusFilter === "active" ? activeStatuses.includes(project.status)
+      : project.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+  const projectCounts = {
+    all: projects.length,
+    active: projects.filter((project) => activeStatuses.includes(project.status)).length,
+    ready: projects.filter((project) => project.status === "ready").length,
+    failed: projects.filter((project) => project.status === "failed").length,
+    cancelled: projects.filter((project) => project.status === "cancelled").length,
+  };
   const currentProject = projects.find((project) => project.id === currentProjectId) || readyProjects[0] || projects[0] || null;
   const processingProject = projects.find((project) => project.id === processingId) || null;
 
@@ -167,12 +213,34 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   }, [loadProjects, projects]);
   async function signOut() { await fetch("/api/auth/logout", { method: "POST" }); window.location.assign("/"); }
   function changeView(next: View) { setView(next); setMenuOpen(false); if (next === "clips" && !currentProjectId && readyProjects[0]) setCurrentProjectId(readyProjects[0].id); }
-  function resetNewProject() { setVideoUrl(""); setMetadata(null); setInputError(""); setFormat("9:16"); setFraming("fit"); setClipDuration("60"); setAnalysisMinutes(1); }
+  function resetNewProject() { setVideoUrl(""); setMetadata(null); setInputError(""); setFormat("9:16"); setFraming("fit"); setClipDuration("60"); setAnalysisMinutes(1); setEditingProjectId(null); }
   function openNewProject() { resetNewProject(); setWizardStep(0); }
   function openProject(project: Project) {
     setCurrentProjectId(project.id);
     if (activeStatuses.includes(project.status) || project.status === "failed") setProcessingId(project.id);
     else if (project.status === "ready") changeView("clips");
+  }
+
+  function editExistingProject(project: Project) {
+    setEditingProjectId(project.id);
+    setVideoUrl(project.sourceUrl);
+    setMetadata({
+      videoId: project.sourceVideoId,
+      title: project.title,
+      durationSeconds: project.sourceDurationSeconds,
+      thumbnailUrl: project.thumbnailUrl || `https://i.ytimg.com/vi/${project.sourceVideoId}/hqdefault.jpg`,
+      channel: "Projeto existente",
+      canonicalUrl: project.sourceUrl,
+    });
+    setFormat(project.format);
+    setFraming(project.framing);
+    setPrompt(project.prompt || "");
+    setClipDuration(String(project.requestedClipSeconds));
+    setAnalysisMinutes(project.requestedAnalysisMinutes);
+    setCaptionStyle(project.captionStyle);
+    setInputError("");
+    setProcessingId(null);
+    setWizardStep(1);
   }
 
   async function inspectSource(goToFormat = true) {
@@ -196,26 +264,53 @@ export default function StudioApp({ user }: { user: StudioUser }) {
     if (analysisMinutes > creditBalance) { setInputError(`Saldo insuficiente: a análise exige até ${analysisMinutes} créditos.`); return; }
     setCreating(true); setInputError("");
     try {
-      const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      const projectBody = {
         sourceUrl: metadata.canonicalUrl, videoId: metadata.videoId, title: metadata.title,
         durationSeconds: metadata.durationSeconds, thumbnailUrl: metadata.thumbnailUrl, analysisMinutes,
         clipDuration: Number(clipDuration), format, framing, prompt, captionStyle,
-      }) });
+      };
+      const response = await fetch(editingProjectId ? `/api/projects/${editingProjectId}` : "/api/projects", {
+        method: editingProjectId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingProjectId ? { action: "update_and_retry", ...projectBody } : projectBody),
+      });
       const payload = await response.json() as { project?: Project; error?: string };
       if (!response.ok || !payload.project) throw new Error(payload.error || "Não foi possível iniciar o processamento.");
       const created = payload.project;
       setProjects((current) => [created, ...current.filter((project) => project.id !== created.id)]);
-      setCurrentProjectId(created.id); setProcessingId(created.id); setWizardStep(null); setView("projects");
+      setCurrentProjectId(created.id); setProcessingId(created.id); setEditingProjectId(null); setWizardStep(null); setView("projects");
       window.setTimeout(() => void loadProjects(true), 1000);
     } catch (error) { setInputError(error instanceof Error ? error.message : "Não foi possível iniciar o processamento."); }
     finally { setCreating(false); }
+  }
+
+  async function projectAction(project: Project, action: "retry" | "duplicate") {
+    if (projectActionBusy) return;
+    setProjectActionBusy(project.id); setLoadError(""); setActionNotice("");
+    try {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const payload = await response.json().catch(() => ({})) as { project?: Project; error?: string };
+      if (!response.ok || !payload.project) throw new Error(payload.error || "Não foi possível reutilizar o projeto.");
+      const queued = payload.project;
+      setProjects((current) => [queued, ...current.filter((item) => item.id !== queued.id)]);
+      setCurrentProjectId(queued.id); setProcessingId(queued.id); setView("projects");
+      setActionNotice(action === "retry" ? "Projeto reenviado com as mesmas configurações." : "Cópia criada e enviada para a fila.");
+      window.setTimeout(() => setActionNotice(""), 5000);
+      window.setTimeout(() => void loadProjects(true), 1000);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Não foi possível reutilizar o projeto.");
+    } finally { setProjectActionBusy(null); }
   }
 
   async function cancelProject(projectId: string) {
     const response = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) { setLoadError(payload.error || "Não foi possível cancelar."); return; }
-    setProcessingId(null); await loadProjects(true);
+    setProcessingId(null); setActionNotice("Cancelamento solicitado."); await loadProjects(true);
   }
 
   async function removeProject(project: Project) {
@@ -224,8 +319,34 @@ export default function StudioApp({ user }: { user: StudioUser }) {
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) { setLoadError(payload.error || "Não foi possível excluir o projeto."); return; }
     setProjects((current) => current.filter((item) => item.id !== project.id));
+    setSelectedProjectIds((current) => current.filter((id) => id !== project.id));
     if (currentProjectId === project.id) setCurrentProjectId(null);
     if (processingId === project.id) setProcessingId(null);
+    setActionNotice("Projeto e arquivos excluídos.");
+  }
+
+  async function removeSelectedProjects() {
+    const selected = projects.filter((project) => selectedProjectIds.includes(project.id) && ["ready", "failed", "cancelled"].includes(project.status));
+    if (!selected.length || !window.confirm(`Excluir ${selected.length} projeto(s) selecionado(s) e todos os MP4 relacionados?`)) return;
+    setProjectActionBusy("bulk-delete"); setLoadError("");
+    const removed: string[] = [];
+    try {
+      for (const project of selected) {
+        const response = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(payload.error || `Não foi possível excluir ${project.title}.`);
+        }
+        removed.push(project.id);
+      }
+      setProjects((current) => current.filter((project) => !removed.includes(project.id)));
+      setSelectedProjectIds([]);
+      setActionNotice(`${removed.length} projeto(s) e seus arquivos foram excluídos.`);
+    } catch (error) {
+      setProjects((current) => current.filter((project) => !removed.includes(project.id)));
+      setSelectedProjectIds((current) => current.filter((id) => !removed.includes(id)));
+      setLoadError(error instanceof Error ? error.message : "Não foi possível concluir a exclusão em lote.");
+    } finally { setProjectActionBusy(null); }
   }
 
   async function copyCaption(clip: Clip) {
@@ -236,6 +357,21 @@ export default function StudioApp({ user }: { user: StudioUser }) {
   async function advanceWizard() {
     if (wizardStep === 0) { await inspectSource(true); return; }
     if (wizardStep !== null && wizardStep < 4) setWizardStep(wizardStep + 1);
+  }
+
+  function projectCard(project: Project) {
+    return <ProjectCard
+      key={project.id}
+      project={project}
+      selected={selectedProjectIds.includes(project.id)}
+      onSelect={() => setSelectedProjectIds((current) => current.includes(project.id) ? current.filter((id) => id !== project.id) : [...current, project.id])}
+      onOpen={() => openProject(project)}
+      onRetry={() => void projectAction(project, "retry")}
+      onEdit={() => editExistingProject(project)}
+      onDuplicate={() => void projectAction(project, "duplicate")}
+      onCancel={() => void cancelProject(project.id)}
+      onRemove={() => void removeProject(project)}
+    />;
   }
 
   return <div className="app-shell">
@@ -251,19 +387,22 @@ export default function StudioApp({ user }: { user: StudioUser }) {
     <div className="workspace"><header className="topbar"><div className="topbar-left"><button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu /></button><i /><span>{viewTitles[view]}</span></div><div className="top-actions"><span className={`status-pill${processorConfigured ? "" : " status-off"}`}><i /> {processorConfigured ? "Processador operacional" : "Processador não configurado"}</span><button className="credit-pill" onClick={() => changeView("billing")}><Sparkles size={15} /><strong>{creditBalance}</strong><span>créditos</span></button><button className="icon-button" aria-label="Notificações"><Bell size={18} /></button><span className="top-avatar">{userInitials}</span></div></header>
 
       <main className="main-content">
-        {loadError && <div className="studio-error-banner">{loadError}<button onClick={() => void loadProjects()}>Tentar novamente</button></div>}
+        {loadError && <div className="studio-error-banner">{loadError}<button onClick={() => { setLoadError(""); void loadProjects(); }}>Tentar novamente</button></div>}
+        {actionNotice && <div className="studio-action-notice"><Check /> {actionNotice}</div>}
 
         {view === "dashboard" && <div className="dashboard-view">
           <section className="hero-section"><div className="hero-glow" /><div className="hero-copy"><div className="eyebrow"><span><Sparkles size={14} /></span> CORTES REAIS COM IA</div><h1>Transforme conversas em<br /><em>cortes que prendem.</em></h1><p>Cole um vídeo autorizado do YouTube. O StormCast transcreve, encontra os melhores momentos, enquadra e renderiza cada corte no seu servidor.</p></div>
             <div className="creator-panel"><div className="source-tabs"><button className="active"><Link2 size={16} /> YouTube</button><button disabled title="Em desenvolvimento"><Video size={16} /> Upload em breve</button></div><div className={`hero-input${inputError ? " has-error" : ""}`}><Link2 size={20} /><input value={videoUrl} onChange={(event) => { setVideoUrl(event.target.value); setMetadata(null); setInputError(""); }} onKeyDown={(event) => event.key === "Enter" && void inspectSource(true)} placeholder="https://youtube.com/watch?v=..." aria-label="Link do YouTube" /><button disabled={inspecting} onClick={() => void inspectSource(true)}><WandSparkles size={17} /> {inspecting ? "Consultando..." : "Criar cortes"}</button></div><div className="source-help"><span>{inputError || "YouTube primeiro • até 90 minutos • use apenas conteúdo autorizado"}</span><div><i>YouTube</i><i>FFmpeg</i><i>OpenAI</i></div></div></div>
             <div className="quick-actions"><button onClick={openNewProject}><span><Sparkles /></span><div><strong>Cortes automáticos</strong><small>Transcrição, seleção e MP4 reais</small></div><ArrowRight /></button><button onClick={() => changeView("projects")}><span><FolderOpen /></span><div><strong>Acompanhar a fila</strong><small>Veja o progresso do servidor</small></div><ArrowRight /></button><button onClick={() => changeView("brand")}><span><Palette /></span><div><strong>Definir identidade</strong><small>Escolha o estilo de legenda</small></div><ArrowRight /></button></div>
           </section>
-          <section className="dashboard-grid"><div className="dashboard-main-column"><div className="section-heading"><div><span>SEUS CONTEÚDOS</span><h2>Projetos recentes</h2></div><button onClick={() => changeView("projects")}>Ver todos <ArrowRight size={15} /></button></div><div className="project-grid project-grid-home">{projects.slice(0, 3).map((project) => <ProjectCard key={project.id} project={project} onOpen={() => openProject(project)} onRemove={() => void removeProject(project)} />)}<button className="empty-project-card" onClick={openNewProject}><span><Plus /></span><strong>Novo projeto</strong><small>Comece com um vídeo do YouTube</small></button></div></div>
+          <section className="dashboard-grid"><div className="dashboard-main-column"><div className="section-heading"><div><span>SEUS CONTEÚDOS</span><h2>Projetos recentes</h2></div><button onClick={() => changeView("projects")}>Ver todos <ArrowRight size={15} /></button></div><div className="project-grid project-grid-home">{projects.slice(0, 3).map(projectCard)}<button className="empty-project-card" onClick={openNewProject}><span><Plus /></span><strong>Novo projeto</strong><small>Comece com um vídeo do YouTube</small></button></div></div>
             <aside className="insights-panel"><div className="section-heading compact"><div><span>DADOS REAIS</span><h2>Sua produção</h2></div><BarChart3 size={19} /></div><div className="metrics-grid"><div className="metric metric-accent"><strong>{totalClips}</strong><span>cortes renderizados</span></div><div className="metric"><strong>{averageScore || "—"}</strong><span>score médio da IA</span></div><div className="metric"><strong>{readyProjects.length}</strong><span>projetos concluídos</span></div><div className="metric"><strong>{creditBalance}</strong><span>créditos restantes</span></div></div><div className="insight-card"><span><Sparkles /></span><div><strong>Sem números inventados</strong><p>Este painel mostra apenas projetos, cortes e créditos salvos no servidor.</p></div></div></aside>
           </section>
         </div>}
 
-        {view === "projects" && <div className="collection-view"><div className="collection-head"><div><span className="eyebrow simple"><FolderOpen size={14} /> BIBLIOTECA</span><h1>Seus projetos</h1><p>Fila, andamento, falhas e resultados reais.</p></div><button className="primary-button" onClick={openNewProject}><Plus /> Novo projeto</button></div><div className="filter-bar"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar projeto" /></label><div><button className="active">Todos</button></div></div>{loadingProjects ? <div className="empty-state"><span><Sparkles /></span><h3>Carregando projetos</h3><p>Consultando a fila no servidor.</p></div> : <><div className="project-grid collection-grid">{filteredProjects.map((project) => <ProjectCard key={project.id} project={project} onOpen={() => openProject(project)} onRemove={() => void removeProject(project)} />)}</div>{!filteredProjects.length && <div className="empty-state"><span><FolderOpen /></span><h3>Nenhum projeto ainda</h3><p>Cole um link do YouTube para gerar seu primeiro corte real.</p><button className="primary-button" onClick={openNewProject}><Plus /> Criar projeto</button></div>}</>}</div>}
+        {view === "projects" && <div className="collection-view"><div className="collection-head"><div><span className="eyebrow simple"><FolderOpen size={14} /> BIBLIOTECA</span><h1>Seus projetos</h1><p>Reprocesse falhas, ajuste configurações e gerencie os arquivos.</p></div><div className="collection-head-actions">{selectedProjectIds.length > 0 && <button className="bulk-delete-button" disabled={projectActionBusy === "bulk-delete"} onClick={() => void removeSelectedProjects()}><Trash2 /> {projectActionBusy === "bulk-delete" ? "Excluindo..." : `Excluir selecionados (${selectedProjectIds.length})`}</button>}<button className="primary-button" onClick={openNewProject}><Plus /> Novo projeto</button></div></div><div className="filter-bar"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar projeto" /></label><div>{([
+          ["all", "Todos"], ["active", "Em andamento"], ["ready", "Prontos"], ["failed", "Falharam"], ["cancelled", "Cancelados"],
+        ] as const).map(([id, label]) => <button key={id} className={statusFilter === id ? "active" : ""} onClick={() => setStatusFilter(id)}>{label} <span>{projectCounts[id]}</span></button>)}</div></div>{loadingProjects ? <div className="empty-state"><span><Sparkles /></span><h3>Carregando projetos</h3><p>Consultando a fila no servidor.</p></div> : <><div className="project-grid collection-grid">{filteredProjects.map(projectCard)}</div>{!filteredProjects.length && <div className="empty-state"><span><FolderOpen /></span><h3>Nenhum projeto neste filtro</h3><p>Escolha outro status ou crie um processamento.</p><button className="primary-button" onClick={openNewProject}><Plus /> Criar projeto</button></div>}</>}</div>}
 
         {view === "clips" && <div className="clips-view">{currentProject?.status === "ready" ? <><div className="clips-head"><div className="project-title-line"><button onClick={() => changeView("projects")}><ArrowLeft /></button><div><span>{currentProject.platform} • {formatDate(currentProject.createdAt)}</span><h1>{currentProject.title}</h1></div></div><div className="head-actions"><button className="primary-button" onClick={openNewProject}><Plus /> Novo projeto</button></div></div><div className="result-summary"><div className="summary-orb"><Check /></div><div><span>PROCESSAMENTO CONCLUÍDO</span><h2>{currentProject.clips.length} cortes renderizados</h2><p>Arquivos MP4 privados, com legenda e prontos para baixar.</p></div><div className="summary-stats"><span><strong>{Math.max(0, ...currentProject.clips.map((clip) => clip.score))}</strong>melhor score</span><span><strong>{currentProject.format}</strong>proporção</span></div></div><div className="clip-toolbar"><div><button className="active">Todos ({currentProject.clips.length})</button></div><button><BarChart3 size={16} /> Maior score</button></div><div className="clips-grid">{currentProject.clips.map((clip, index) => <article className="clip-card" key={clip.id}><button className="clip-preview real-clip-preview" onClick={() => setPreviewClip(clip)}><img src={clip.posterUrl} alt={`Prévia de ${clip.title}`} /><span className="clip-number">{String(index + 1).padStart(2, "0")}</span><span className="play-button"><Play size={20} /></span><span className="clip-caption-preview">{clip.hook}</span><span className="clip-time"><Clock3 size={13} /> {Math.round(clip.durationSeconds)}s</span></button><div className="clip-body"><div className="clip-score"><Sparkles size={14} /><strong>{clip.score}</strong><span>score da IA</span></div><h3>{clip.title}</h3><p>“{clip.hook}”</p><div className="clip-range"><span>{formatClock(clip.startSeconds)} — {formatClock(clip.endSeconds)}</span><span>{currentProject.format}</span></div><div className="clip-actions"><button onClick={() => setPreviewClip(clip)}><Play size={15} /> Prévia</button><button className={copied === clip.id ? "copied" : ""} onClick={() => void copyCaption(clip)}>{copied === clip.id ? <Check size={15} /> : <Copy size={15} />}{copied === clip.id ? "Copiado" : "Legenda"}</button><a href={clip.downloadUrl}><Download size={15} /> Baixar MP4</a></div></div></article>)}</div></> : <div className="empty-state"><span><Video /></span><h3>Nenhum corte pronto selecionado</h3><p>Abra um projeto concluído ou acompanhe a fila.</p><button className="primary-button" onClick={() => changeView("projects")}>Ver projetos</button></div>}</div>}
 
@@ -279,8 +418,8 @@ export default function StudioApp({ user }: { user: StudioUser }) {
       </main>
     </div>
 
-    {wizardStep !== null && <div className="wizard-layer" role="dialog" aria-modal="true" aria-label="Configurar novo projeto">
-      <div className="wizard-top"><button className="brand-lockup" onClick={() => setWizardStep(null)}><span className="brand-mark"><span /></span><span><strong>StormCast</strong><small>CREATE FLOW</small></span></button><div className="stepper">{[0, 1, 2, 3, 4].map((step) => <span key={step} className={step < wizardStep ? "done" : step === wizardStep ? "active" : ""}>{step < wizardStep ? <Check size={13} /> : step + 1}</span>)}</div><button className="wizard-close" onClick={() => setWizardStep(null)} aria-label="Fechar"><X /></button></div>
+    {wizardStep !== null && <div className="wizard-layer" role="dialog" aria-modal="true" aria-label={editingProjectId ? "Editar e reprocessar projeto" : "Configurar novo projeto"}>
+      <div className="wizard-top"><button className="brand-lockup" onClick={() => setWizardStep(null)}><span className="brand-mark"><span /></span><span><strong>StormCast</strong><small>{editingProjectId ? "RECOVERY FLOW" : "CREATE FLOW"}</small></span></button><div className="stepper">{[0, 1, 2, 3, 4].map((step) => <span key={step} className={step < wizardStep ? "done" : step === wizardStep ? "active" : ""}>{step < wizardStep ? <Check size={13} /> : step + 1}</span>)}</div><button className="wizard-close" onClick={() => setWizardStep(null)} aria-label="Fechar"><X /></button></div>
       <div className="wizard-content">
         {wizardStep === 0 && <section className="wizard-step source-step"><span className="step-kicker">PASSO 1 DE 5</span><h1>Qual vídeo vamos processar?</h1><p>Use um vídeo do YouTube que você tenha autorização para editar.</p><div className={`wizard-link-field${inputError ? " has-error" : ""}`}><Link2 /><input value={videoUrl} onChange={(event) => { setVideoUrl(event.target.value); setMetadata(null); setInputError(""); }} placeholder="https://youtube.com/watch?v=..." /></div>{inputError && <span className="field-error">{inputError}</span>}<div className="safe-note"><ShieldCheck size={15} /> O servidor consulta título e duração reais com yt-dlp.</div></section>}
 
@@ -292,12 +431,12 @@ export default function StudioApp({ user }: { user: StudioUser }) {
 
         {wizardStep === 4 && metadata && <section className="wizard-step review-step"><span className="step-kicker">PASSO 5 DE 5</span><h1>Pronto para o processamento real</h1><p>O trabalho entrará na fila única do servidor e poderá levar vários minutos sem GPU.</p><div className="review-hero"><div className="review-art"><SourcePicture src={metadata.thumbnailUrl} alt={metadata.title} /><span><Play /></span></div><div><span>YouTube • {metadata.channel}</span><h2>{metadata.title}</h2><p>{metadata.canonicalUrl}</p></div></div><div className="review-grid"><button onClick={() => setWizardStep(1)}><span><Monitor /></span><div><small>FORMATO</small><strong>{format === "9:16" ? "Vertical 9:16" : "Horizontal 16:9"}</strong><em>{framing === "fit" ? "Vídeo inteiro + fundo" : "Corte central"}</em></div><ChevronRight /></button><button onClick={() => setWizardStep(2)}><span><Clock3 /></span><div><small>DURAÇÃO</small><strong>{clipDuration} segundos</strong><em>{analysisMinutes} minutos analisados</em></div><ChevronRight /></button><button onClick={() => setWizardStep(3)}><span><Captions /></span><div><small>LEGENDA</small><strong>{selectedCaption.label}</strong><em>Português automático</em></div><ChevronRight /></button><button onClick={() => setWizardStep(1)}><span><WandSparkles /></span><div><small>DIREÇÃO DA IA</small><strong>{prompt ? "Personalizada" : "Padrão"}</strong><em>{prompt.length} caracteres</em></div><ChevronRight /></button></div><div className="analysis-note"><Sparkles /><div><strong>Etapas reais</strong><p>Download autorizado, extração de áudio, transcrição, seleção editorial e renderização com FFmpeg.</p></div></div>{inputError && <span className="field-error review-error">{inputError}</span>}</section>}
       </div>
-      <div className="wizard-footer"><button className="back-button" onClick={() => wizardStep === 0 ? setWizardStep(null) : setWizardStep(wizardStep - 1)}>{wizardStep === 0 ? "Cancelar" : "Voltar"}</button><span>Nada será cobrado antes da conclusão.</span>{wizardStep < 4 ? <button className="primary-button" disabled={inspecting} onClick={() => void advanceWizard()}>{inspecting ? "Consultando..." : "Continuar"} <ArrowRight /></button> : <button className="primary-button launch-button" disabled={creating || !processorConfigured} onClick={() => void createProject()}><Sparkles /> {creating ? "Enviando..." : processorConfigured ? "Iniciar análise real" : "Processador indisponível"}</button>}</div>
+      <div className="wizard-footer"><button className="back-button" onClick={() => wizardStep === 0 ? setWizardStep(null) : setWizardStep(wizardStep - 1)}>{wizardStep === 0 ? "Cancelar" : "Voltar"}</button><span>Nada será cobrado antes da conclusão.</span>{wizardStep < 4 ? <button className="primary-button" disabled={inspecting} onClick={() => void advanceWizard()}>{inspecting ? "Consultando..." : "Continuar"} <ArrowRight /></button> : <button className="primary-button launch-button" disabled={creating || !processorConfigured} onClick={() => void createProject()}><Sparkles /> {creating ? "Enviando..." : processorConfigured ? editingProjectId ? "Salvar e reprocessar" : "Iniciar análise real" : "Processador indisponível"}</button>}</div>
     </div>}
 
     {processingProject && activeStatuses.includes(processingProject.status) && <div className="processing-layer" role="status"><div className="processing-visual"><div className="scan-frame"><SourcePicture src={processingProject.thumbnailUrl} alt={processingProject.title} /><div className="scan-line" /></div><div className="processing-orbit" style={{ background: `conic-gradient(var(--lime) ${processingProject.progress}%, #1c2028 0)` }}><span>{processingProject.progress}%</span></div></div><span className="step-kicker">PROCESSAMENTO REAL</span><h1>{processingProject.stage}</h1><p>{processingProject.title}</p><div className="processing-stages">{[["downloading", "Baixar vídeo"], ["transcribing", "Transcrever áudio"], ["analyzing", "Escolher momentos"], ["rendering", "Renderizar MP4"]].map(([status, label], index, stages) => { const currentIndex = stages.findIndex(([value]) => value === processingProject.status); return <div key={status} className={index < currentIndex ? "done" : index === currentIndex || (processingProject.status === "queued" && index === 0) ? "active" : ""}><span>{index < currentIndex ? <Check size={14} /> : index + 1}</span><strong>{label}</strong>{index === currentIndex && <i />}</div>; })}</div><small>Seu Xeon processa um trabalho por vez. Você pode fechar esta tela e voltar depois.</small><div className="processing-actions"><button onClick={() => setProcessingId(null)}>Continuar em segundo plano</button><button className="cancel-processing" onClick={() => void cancelProject(processingProject.id)}>Cancelar processamento</button></div></div>}
 
-    {processingProject?.status === "failed" && <div className="processing-layer processing-failed" role="alert"><span className="step-kicker">PROCESSAMENTO INTERROMPIDO</span><h1>Não foi possível gerar os cortes</h1><p>{processingProject.error || "O servidor encerrou o trabalho sem cobrar créditos."}</p><small>Nenhum crédito foi descontado.</small><div className="processing-actions"><button onClick={() => { setProcessingId(null); setView("projects"); }}>Voltar aos projetos</button><button className="primary-button" onClick={openNewProject}>Tentar outro vídeo</button></div></div>}
+    {processingProject?.status === "failed" && <div className="processing-layer processing-failed" role="alert"><span className="step-kicker">PROCESSAMENTO INTERROMPIDO</span><h1>Não foi possível gerar os cortes</h1><p>{friendlyProjectError(processingProject.error)}</p><small>Nenhum crédito foi descontado. Você pode reutilizar este mesmo projeto.</small><div className="processing-actions processing-recovery-actions"><button onClick={() => { setProcessingId(null); setView("projects"); }}>Voltar aos projetos</button><button onClick={() => editExistingProject(processingProject)}><Pencil /> Editar configurações</button><button className="primary-button" disabled={projectActionBusy === processingProject.id} onClick={() => void projectAction(processingProject, "retry")}><RotateCcw /> {projectActionBusy === processingProject.id ? "Reenviando..." : "Reprocessar agora"}</button></div></div>}
 
     {previewClip && currentProject && <div className="preview-modal" role="dialog" aria-modal="true"><button className="preview-scrim" onClick={() => setPreviewClip(null)} aria-label="Fechar prévia" /><div className="preview-dialog"><div className="preview-dialog-head"><div><span>ARQUIVO RENDERIZADO</span><h2>{previewClip.title}</h2></div><button onClick={() => setPreviewClip(null)}><X /></button></div><div className="preview-stage"><video className={`preview-video-element${currentProject.format === "16:9" ? " preview-landscape" : ""}`} src={previewClip.videoUrl} poster={previewClip.posterUrl} controls autoPlay playsInline /></div><div className="preview-info"><div><span><Clock3 /> {formatClock(previewClip.startSeconds)} — {formatClock(previewClip.endSeconds)}</span><span><Sparkles /> Score {previewClip.score}</span></div><p>{previewClip.caption}</p><div className="preview-downloads"><button className="secondary-button" onClick={() => void copyCaption(previewClip)}><Copy /> Copiar legenda</button><a className="primary-button" href={previewClip.downloadUrl}><Download /> Baixar MP4</a></div></div></div></div>}
   </div>;

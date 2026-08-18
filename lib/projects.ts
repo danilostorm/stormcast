@@ -67,6 +67,7 @@ export type PublicProject = {
   requestedClipSeconds: number;
   format: "9:16" | "16:9";
   framing: "fit" | "center";
+  prompt: string;
   captionStyle: string;
   thumbnailUrl: string | null;
   status: ProjectStatus;
@@ -109,6 +110,7 @@ function publicProject(row: ProjectRow, clips: ClipRow[]): PublicProject {
     requestedClipSeconds: Number(row.requested_clip_seconds),
     format: row.format,
     framing: row.framing,
+    prompt: row.prompt,
     captionStyle: row.caption_style,
     thumbnailUrl: row.thumbnail_url,
     status: row.status,

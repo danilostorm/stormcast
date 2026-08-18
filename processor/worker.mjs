@@ -495,6 +495,8 @@ function completeProject(db, job, rendered, stagingDirectory) {
 function publicError(error) {
   const value = cleanText(error instanceof Error ? error.message : String(error), "Falha inesperada no processamento.", 800);
   if (/OPENAI_API_KEY|Bearer\s+[A-Za-z0-9_-]+/i.test(value)) return "A integração com a OpenAI não está configurada corretamente.";
+  if (/OpenAI \(429\)|no credits remaining|insufficient_quota|billing/i.test(value)) return "A conta da OpenAI está sem saldo disponível. Adicione créditos na API e use Reprocessar neste projeto.";
+  if (/HTTP (Error )?403|403 Forbidden/i.test(value)) return "O YouTube recusou temporariamente o download. Atualize o yt-dlp ou tente reprocessar mais tarde.";
   if (/ENOENT/.test(value)) return "Uma ferramenta de processamento não foi encontrada no servidor.";
   return value;
 }
