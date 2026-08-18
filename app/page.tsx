@@ -82,21 +82,21 @@ export default async function MarketingPage() {
             <div className="focus-frame frame-one" /><div className="focus-frame frame-two" />
           </div>
           <div className="signal-track">
-            <div className="signal-label"><span>INTENSIDADE DA CONVERSA</span><strong>6 momentos encontrados</strong></div>
+            <div className="signal-label"><span>EXEMPLO DE RESULTADO</span><strong>Cortes extraídos do vídeo real</strong></div>
             <div className="signal-bars">{[22, 38, 30, 62, 45, 84, 54, 42, 91, 64, 35, 72, 48, 29, 57, 36, 76, 44, 28, 55].map((height, index) => <i key={index} className={[5, 8, 16].includes(index) ? "peak" : ""} style={{ height: `${height}%` }} />)}</div>
           </div>
-          <div className="moment-card"><span><Sparkles size={15} /></span><div><small>MELHOR GANCHO</small><strong>Score de retenção 96</strong></div><ArrowRight size={17} /></div>
+          <div className="moment-card"><span><Sparkles size={15} /></span><div><small>ANÁLISE EDITORIAL</small><strong>Trechos avaliados pela IA</strong></div><ArrowRight size={17} /></div>
         </div>
 
         <div className="platform-strip">
-          <span>ENTRADAS COMPATÍVEIS</span><div><i>YouTube</i><i>Twitch</i><i>Kick</i><i>Google Drive</i><i>MP4</i></div>
+          <span>DISPONÍVEL AGORA</span><div><i>YouTube</i><i>Vídeos próprios ou autorizados</i><i>Até 90 min analisados</i></div>
         </div>
       </section>
 
       <section className="method-section" id="metodo">
         <div className="section-intro centered"><span>UM FLUXO, SEM ATRITO</span><h2>Da conversa ao corte em três movimentos.</h2><p>Você mantém a direção criativa. O StormCast cuida da parte repetitiva.</p></div>
         <div className="method-grid">
-          <article><span className="method-number">01</span><div className="method-icon"><Clapperboard /></div><h3>Traga o conteúdo</h3><p>Cole um link ou envie o arquivo. Escolha quanto do vídeo deve ser analisado.</p><small>LINK OU UPLOAD</small></article>
+          <article><span className="method-number">01</span><div className="method-icon"><Clapperboard /></div><h3>Traga o conteúdo</h3><p>Cole o link de um vídeo autorizado do YouTube e escolha quantos minutos devem ser analisados.</p><small>LINK DO YOUTUBE</small></article>
           <article><span className="method-number">02</span><div className="method-icon"><ScanSearch /></div><h3>Defina a intenção</h3><p>Informe tema, duração, formato e o tipo de momento que vale a pena encontrar.</p><small>DIREÇÃO CRIATIVA</small></article>
           <article><span className="method-number">03</span><div className="method-icon"><Layers3 /></div><h3>Revise e publique</h3><p>Compare scores, ajuste a legenda e prepare cada corte para o canal certo.</p><small>SAÍDA ORGANIZADA</small></article>
         </div>
@@ -131,7 +131,7 @@ export default async function MarketingPage() {
       <section className="feature-section">
         <div className="section-intro"><span>FERRAMENTAS QUE CONVERSAM</span><h2>Seu conteúdo em um único lugar.</h2></div>
         <div className="feature-grid">
-          <article className="feature-wide"><span><Radio /></span><div><small>CAPTURA CONTÍNUA</small><h3>Monitore lives sem perder o melhor minuto.</h3><p>Acompanhe canais e reúna destaques no mesmo espaço dos projetos gravados.</p></div><div className="live-pulse"><i /><b>AO VIVO</b><strong>18</strong><small>momentos</small></div></article>
+          <article className="feature-wide"><span><Radio /></span><div><small>PRÓXIMA ETAPA</small><h3>Monitoramento de lives virá depois.</h3><p>Primeiro estamos entregando o fluxo completo e real para vídeos gravados do YouTube.</p></div><div className="live-pulse"><i /><b>EM BREVE</b><strong>—</strong><small>sem simulação</small></div></article>
           <article><span><Captions /></span><small>LEGENDAS</small><h3>Leitura rápida, estilo seu.</h3><p>Presets visuais prontos para personalizar.</p></article>
           <article><span><ChartNoAxesCombined /></span><small>ANÁLISE</small><h3>Entenda seu ritmo de produção.</h3><p>Projetos, cortes, consumo e histórico.</p></article>
           <article><span><ShieldCheck /></span><small>ACESSO</small><h3>Conta e painel protegidos.</h3><p>Sessões seguras e controle administrativo.</p></article>
@@ -151,8 +151,8 @@ export default async function MarketingPage() {
       <section className="faq-section" id="faq">
         <div className="section-intro"><span>SEM LETRAS MIÚDAS</span><h2>Perguntas frequentes.</h2></div>
         <div className="faq-list">
-          <details><summary>O StormCast já processa vídeos reais?<span>+</span></summary><p>Esta versão entrega o fluxo completo de produto em modo demonstrativo. A infraestrutura de transcrição, IA e renderização por FFmpeg será conectada na próxima fase.</p></details>
-          <details><summary>Quais fontes de vídeo são aceitas?<span>+</span></summary><p>O painel aceita links do YouTube, Twitch, Kick e Google Drive, além de arquivos de vídeo enviados pelo navegador.</p></details>
+          <details><summary>O StormCast já processa vídeos reais?<span>+</span></summary><p>Sim, quando o processador híbrido está configurado no Ubuntu. O sistema consulta o YouTube, transcreve o áudio, escolhe trechos reais e renderiza os MP4 com FFmpeg. A versão hospedada de apresentação não executa o worker pesado.</p></details>
+          <details><summary>Quais fontes de vídeo são aceitas?<span>+</span></summary><p>Nesta primeira versão real, somente links individuais do YouTube de vídeos próprios ou autorizados. Upload, Twitch, Kick, Drive e lives ainda não estão disponíveis.</p></details>
           <details><summary>Minha área fica aberta para qualquer pessoa?<span>+</span></summary><p>Não. O estúdio e a administração exigem sessão autenticada. Cada conta usa seu próprio espaço local de projetos.</p></details>
           <details><summary>Posso usar a identidade da minha marca?<span>+</span></summary><p>Sim. O Brand Kit permite definir cores, estilo de legenda e assinatura visual para manter consistência.</p></details>
         </div>
