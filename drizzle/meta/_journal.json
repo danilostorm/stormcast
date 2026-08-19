@@ -29,6 +29,13 @@
       "when": 1787089247709,
       "tag": "0003_stiff_nitro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787097821377,
+      "tag": "0004_handy_scarecrow",
+      "breakpoints": true
     }
   ]
 }

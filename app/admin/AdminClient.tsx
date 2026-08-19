@@ -3,6 +3,7 @@
 import {
   Activity,
   ArrowLeft,
+  BrainCircuit,
   Coins,
   FileClock,
   FolderKanban,
@@ -24,9 +25,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AuthUser } from "../../lib/auth";
+import AiProvidersPanel from "./AiProvidersPanel";
 
 type View =
-  "users" | "projects" | "media" | "activity" | "system" | "site" | "security";
+  "users" | "projects" | "media" | "activity" | "system" | "ai" | "site" | "security";
 type ManagedUser = {
   id: string;
   name: string;
@@ -67,7 +69,9 @@ type SystemData = {
     healthy: boolean;
     heartbeat: number;
     lastError: string;
+    analysisProvider: string;
     analysisModel: string;
+    transcriptionProvider: string;
     transcriptionModel: string;
     mediaDirectory: string;
     ytdlpConfigured: boolean;
@@ -79,7 +83,7 @@ type SystemData = {
   usage: {
     minutes: number;
     credits: number;
-    estimatedOpenAiCost: number;
+    estimatedAiCost: number;
     costPerMinute: number;
   };
 };
@@ -356,6 +360,7 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
     media: ["ARMAZENAMENTO", "Mídia e retenção"],
     activity: ["RASTREABILIDADE", "Histórico e auditoria"],
     system: ["CONFIGURAÇÃO", "Sistema e processador"],
+    ai: ["INTELIGÊNCIA ARTIFICIAL", "Provedores, chaves e modelos"],
     site: ["FRONTEND", "Site público"],
     security: ["SEGURANÇA", "Sessões e política de acesso"],
   }[view];
@@ -420,6 +425,13 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
           >
             <Activity />
             Operação
+          </button>
+          <button
+            className={view === "ai" ? "active" : ""}
+            onClick={() => setView("ai")}
+          >
+            <BrainCircuit />
+            Provedores de IA
           </button>
           <button
             className={view === "site" ? "active" : ""}
@@ -931,7 +943,7 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
                   ["MINUTOS", system.usage.minutes.toFixed(1)],
                   [
                     "CUSTO EST.",
-                    `US$ ${system.usage.estimatedOpenAiCost.toFixed(2)}`,
+                    `US$ ${system.usage.estimatedAiCost.toFixed(2)}`,
                   ],
                 ]}
               />
@@ -946,11 +958,11 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
                     </div>
                     <div>
                       <dt>Análise</dt>
-                      <dd>{system.processor.analysisModel}</dd>
+                      <dd>{system.processor.analysisProvider} · {system.processor.analysisModel}</dd>
                     </div>
                     <div>
                       <dt>Transcrição</dt>
-                      <dd>{system.processor.transcriptionModel}</dd>
+                      <dd>{system.processor.transcriptionProvider} · {system.processor.transcriptionModel}</dd>
                     </div>
                     <div>
                       <dt>yt-dlp</dt>
@@ -1001,13 +1013,13 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
                     />
                   </label>
                   <label className="admin-field">
-                    Custo OpenAI por minuto (US$)
+                    Custo médio de IA por minuto (US$)
                     <input
                       type="number"
                       step=".001"
-                      value={system.settings.openai_cost_per_minute || ".008"}
+                      value={system.settings.ai_cost_per_minute || system.settings.openai_cost_per_minute || ".008"}
                       onChange={(e) =>
-                        setting("openai_cost_per_minute", e.target.value)
+                        setting("ai_cost_per_minute", e.target.value)
                       }
                     />
                   </label>
@@ -1016,6 +1028,7 @@ export default function AdminClient({ admin }: { admin: AuthUser }) {
               </div>
             </>
           )}
+          {view === "ai" && <AiProvidersPanel />}
           {view === "site" && system && (
             <form className="site-editor" onSubmit={saveSettings}>
               <section className="admin-card">

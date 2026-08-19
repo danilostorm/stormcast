@@ -31,6 +31,7 @@ export type RuntimeBindings = {
   OPENAI_API_KEY?: string;
   OPENAI_ANALYSIS_MODEL?: string;
   OPENAI_TRANSCRIPTION_MODEL?: string;
+  STORMCAST_SECRETS_KEY?: string;
   STORMCAST_ADMIN_EMAIL?: string;
   STORMCAST_ADMIN_PASSWORD?: string;
   STORMCAST_ADMIN_NAME?: string;
@@ -138,6 +139,21 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS ai_providers (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key_encrypted TEXT,
+    api_key_hint TEXT,
+    analysis_model TEXT NOT NULL DEFAULT '',
+    transcription_model TEXT NOT NULL DEFAULT '',
+    supports_analysis INTEGER NOT NULL DEFAULT 1,
+    supports_transcription INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    built_in INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS credit_history (

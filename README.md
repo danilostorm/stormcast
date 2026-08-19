@@ -10,8 +10,8 @@ Plataforma para transformar vídeos longos autorizados em cortes legendados para
 - consulta real de título e duração do YouTube com `yt-dlp`;
 - fila persistente: um trabalho por vez, adequada a servidor sem GPU;
 - download temporário, áudio segmentado e limpeza automática;
-- transcrição com timestamps pela OpenAI;
-- escolha estruturada dos melhores trechos pela OpenAI;
+- transcrição com timestamps pela OpenAI ou Groq;
+- escolha estruturada dos melhores trechos por OpenAI, Groq, DeepSeek, Gemini, OpenRouter ou provedor compatível;
 - renderização local com FFmpeg em 9:16 ou 16:9, cinco enquadramentos e 12 estilos de legenda;
 - detecção facial opcional com OpenCV para movimentar o recorte vertical automaticamente;
 - prévia e download de MP4 acessíveis somente pelo dono do projeto;
@@ -22,9 +22,9 @@ O primeiro conector real é o YouTube. Upload, lives, publicação social e comp
 
 ## Arquitetura híbrida
 
-O servidor Ubuntu executa as partes pesadas de arquivo (`yt-dlp` e FFmpeg). A OpenAI recebe apenas os trechos de áudio para transcrição e a transcrição textual para seleção editorial. O vídeo completo não é enviado à OpenAI.
+O servidor Ubuntu executa as partes pesadas de arquivo (`yt-dlp` e FFmpeg). O provedor escolhido recebe apenas os trechos de áudio para transcrição e/ou a transcrição textual para seleção editorial. O vídeo completo não é enviado ao provedor de análise.
 
-O modelo de transcrição padrão é `whisper-1`, pois o pipeline precisa dos timestamps de segmentos. O modelo de análise padrão é `gpt-5-mini`, usando saída JSON estruturada. Ambos podem ser alterados por variáveis de ambiente.
+O padrão continua sendo OpenAI com `whisper-1` e `gpt-5-mini`. Em `/admin`, a área **Provedores de IA** permite cadastrar chaves criptografadas, testar conexões, alterar modelos e escolher provedores diferentes para transcrição e análise. A variável `OPENAI_API_KEY` permanece como fallback compatível com instalações existentes.
 
 ## Desenvolvimento
 
@@ -44,7 +44,7 @@ npm run test
 npm run processor:check
 ```
 
-`processor:check` termina com erro enquanto a chave, o `yt-dlp` e `STORMCAST_PROCESSOR_ENABLED=1` não estiverem configurados. Isso é intencional.
+`processor:check` termina com erro enquanto os provedores selecionados, o `yt-dlp` e `STORMCAST_PROCESSOR_ENABLED=1` não estiverem configurados. Isso é intencional.
 
 ## Instalação do processamento real no Ubuntu 24.04
 
@@ -75,13 +75,14 @@ sudo install -d -m 750 -o SEU_USUARIO -g SEU_USUARIO /var/lib/stormcast/media/cl
 
 Arquivos de trabalho são apagados ao terminar, falhar ou cancelar. Os MP4 concluídos ficam em `/var/lib/stormcast/media/clips`.
 
-### 3. Crie a chave da OpenAI
+### 3. Configure a chave-mestra e a OpenAI inicial
 
-Crie a chave no painel da OpenAI e coloque-a diretamente no servidor. Não cole a chave em conversa, issue ou commit.
+Crie a chave no painel da OpenAI e coloque-a diretamente no servidor. Gere também uma chave-mestra aleatória, usada para criptografar no banco as chaves que forem cadastradas depois pelo administrativo. Não cole nenhuma delas em conversa, issue ou commit.
 
 Edite como `root`:
 
 ```bash
+openssl rand -hex 32
 sudo nano /etc/stormcast.env
 ```
 
@@ -99,6 +100,7 @@ STORMCAST_SESSION_DAYS="30"
 OPENAI_API_KEY="sk-COLOQUE_A_CHAVE_SOMENTE_AQUI"
 OPENAI_TRANSCRIPTION_MODEL="whisper-1"
 OPENAI_ANALYSIS_MODEL="gpt-5-mini"
+STORMCAST_SECRETS_KEY="COLE_AQUI_O_RESULTADO_DE_OPENSSL_RAND_HEX_32"
 STORMCAST_PROCESSOR_ENABLED="1"
 
 STORMCAST_YTDLP_PATH="/opt/stormcast-tools/bin/yt-dlp"
@@ -162,7 +164,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=StormCast YouTube and OpenAI Processor
+Description=StormCast YouTube and AI Processor
 After=network-online.target stormcast.service
 Wants=network-online.target
 
@@ -239,5 +241,5 @@ O projeto deve passar por `Na fila`, `Baixando`, `Transcrevendo`, `Analisando`, 
 - React 19, Next.js/Vinext e TypeScript
 - SQLite nativo do Node.js no Ubuntu
 - `yt-dlp`, FFmpeg/libass e H.264/AAC
-- OpenAI Audio Transcriptions e Structured Outputs
+- APIs compatíveis com OpenAI: OpenAI, Groq, DeepSeek, Gemini e OpenRouter
 - Cloudflare Workers/D1 para a prévia hospedada (sem o worker pesado)
