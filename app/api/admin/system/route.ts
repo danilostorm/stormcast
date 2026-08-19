@@ -47,6 +47,7 @@ const editableKeys = [
   "feature_brandkit",
   "feature_payments",
   "openai_cost_per_minute",
+  "ai_cost_per_minute",
 ];
 async function admin(request: Request) {
   const user = await userFromRequest(request);
@@ -55,7 +56,7 @@ async function admin(request: Request) {
 export async function GET(request: Request) {
   if (!(await admin(request)))
     return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
-  const [settings, counts, activeSessions, state, totals] = await Promise.all([
+  const [settings, counts, activeSessions, state, totals, providers] = await Promise.all([
     queryAll<{ key: string; value: string }>(
       "SELECT key,value FROM app_settings",
     ),
@@ -72,6 +73,12 @@ export async function GET(request: Request) {
     queryOne<{ minutes: number; credits: number }>(
       "SELECT COALESCE(SUM(analysis_seconds)/60.0,0) minutes,COALESCE(SUM(credits_charged),0) credits FROM projects WHERE status='ready'",
     ),
+    queryAll<{
+      id: string;
+      name: string;
+      analysis_model: string;
+      transcription_model: string;
+    }>("SELECT id,name,analysis_model,transcription_model FROM ai_providers"),
   ]);
   const map = Object.fromEntries(
       settings.map((item) => [item.key, item.value]),
@@ -80,7 +87,9 @@ export async function GET(request: Request) {
       state.map((item) => [item.key, item.value]),
     ),
     heartbeat = Number(processorState.heartbeat || 0),
-    costPerMinute = Number(map.openai_cost_per_minute || 0.008);
+    costPerMinute = Number(map.ai_cost_per_minute || map.openai_cost_per_minute || 0.008),
+    analysisProvider = providers.find((item) => item.id === (map.analysis_provider_id || "openai")),
+    transcriptionProvider = providers.find((item) => item.id === (map.transcription_provider_id || "openai"));
   return NextResponse.json(
     {
       settings: {
@@ -98,9 +107,11 @@ export async function GET(request: Request) {
         healthy: Boolean(heartbeat && Date.now() - heartbeat < 60000),
         heartbeat,
         lastError: processorState.last_error || "",
-        analysisModel: runtimeValue("OPENAI_ANALYSIS_MODEL") || "gpt-5-mini",
+        analysisProvider: analysisProvider?.name || "OpenAI",
+        analysisModel: analysisProvider?.analysis_model || runtimeValue("OPENAI_ANALYSIS_MODEL") || "gpt-5-mini",
+        transcriptionProvider: transcriptionProvider?.name || "OpenAI",
         transcriptionModel:
-          runtimeValue("OPENAI_TRANSCRIPTION_MODEL") || "whisper-1",
+          transcriptionProvider?.transcription_model || runtimeValue("OPENAI_TRANSCRIPTION_MODEL") || "whisper-1",
         mediaDirectory: runtimeValue("STORMCAST_MEDIA_DIR") || ".data/media",
         ytdlpConfigured: Boolean(runtimeValue("STORMCAST_YTDLP_PATH")),
         ffmpegConfigured: Boolean(runtimeValue("STORMCAST_FFMPEG_PATH")),
@@ -116,7 +127,7 @@ export async function GET(request: Request) {
       usage: {
         minutes: Number(totals?.minutes || 0),
         credits: Number(totals?.credits || 0),
-        estimatedOpenAiCost: Number(totals?.minutes || 0) * costPerMinute,
+        estimatedAiCost: Number(totals?.minutes || 0) * costPerMinute,
         costPerMinute,
       },
     },

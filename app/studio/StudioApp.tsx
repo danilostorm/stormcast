@@ -320,7 +320,7 @@ function friendlyProjectError(message: string | null) {
       message,
     )
   ) {
-    return "A conta da OpenAI estava sem saldo. Adicione créditos na API e reprocese este mesmo projeto.";
+    return "A conta da OpenAI estava sem saldo. Adicione créditos na API e reprocesse este mesmo projeto.";
   }
   if (
     /HTTP (Error )?403|403 Forbidden|ffmpeg exited with code 8/i.test(message)

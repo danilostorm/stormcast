@@ -107,6 +107,22 @@ export const appSettings = sqliteTable("app_settings", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+export const aiProviders = sqliteTable("ai_providers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull(),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  apiKeyHint: text("api_key_hint"),
+  analysisModel: text("analysis_model").notNull().default(""),
+  transcriptionModel: text("transcription_model").notNull().default(""),
+  supportsAnalysis: integer("supports_analysis", { mode: "boolean" }).notNull().default(true),
+  supportsTranscription: integer("supports_transcription", { mode: "boolean" }).notNull().default(false),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  builtIn: integer("built_in", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const creditHistory = sqliteTable("credit_history", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

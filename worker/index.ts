@@ -12,6 +12,7 @@ interface Env {
   OPENAI_API_KEY?: string;
   OPENAI_ANALYSIS_MODEL?: string;
   OPENAI_TRANSCRIPTION_MODEL?: string;
+  STORMCAST_SECRETS_KEY?: string;
   STORMCAST_FFMPEG_PATH?: string;
   STORMCAST_FFPROBE_PATH?: string;
   STORMCAST_MEDIA_DIR?: string;
