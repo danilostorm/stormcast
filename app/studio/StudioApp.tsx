@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
+  type ContentProfileId,
   defaultRenderOptions,
   type RenderOptions,
   type FramingId,
@@ -66,6 +67,7 @@ type ProjectStatus =
   | "failed"
   | "cancelled";
 type Framing = FramingId;
+type ContentProfile = ContentProfileId;
 
 type Clip = {
   id: string;
@@ -92,6 +94,7 @@ type Project = {
   analysisSeconds: number;
   requestedClipSeconds: number;
   format: "9:16" | "16:9";
+  contentProfile: ContentProfile;
   framing: Framing;
   prompt: string;
   captionStyle: string;
@@ -118,6 +121,13 @@ type YouTubeMetadata = {
 };
 
 const captionStyles = [
+  {
+    id: "none",
+    label: "🚫 Sem legenda",
+    css: "caption-none",
+    sample: "SEM TEXTO NO VÍDEO",
+    description: "Exportar o corte sem adicionar legendas.",
+  },
   {
     id: "impact",
     label: "Impacto dourado",
@@ -273,6 +283,72 @@ const framingOptions: {
   },
 ];
 
+const gameplayFramingOptions: typeof framingOptions = [
+  {
+    id: "gameplay",
+    label: "🎮 Gameplay inteligente",
+    description:
+      "Segue a ação, veículos, personagem e pontos importantes sem depender de rostos",
+    Icon: Sparkles,
+  },
+  {
+    id: "vehicle",
+    label: "🚗 Veículo em foco",
+    description: "Prioriza e acompanha o veículo principal",
+    Icon: Video,
+  },
+  {
+    id: "action",
+    label: "💥 Ação em foco",
+    description: "Prioriza combate, explosões, perseguições e movimento",
+    Icon: WandSparkles,
+  },
+  {
+    id: "exploration",
+    label: "🌆 Cenário / Exploração",
+    description: "Composição mais aberta para mapas, cidades e paisagens",
+    Icon: Monitor,
+  },
+  {
+    id: "character_gameplay",
+    label: "🕹️ Personagem + Gameplay",
+    description: "Mantém o personagem e o máximo possível do cenário",
+    Icon: Frame,
+  },
+  {
+    id: "gameplay_full",
+    label: "🖥️ Gameplay completo",
+    description: "Preserva o vídeo horizontal inteiro com fundo desfocado",
+    Icon: Monitor,
+  },
+  {
+    id: "smart_zoom",
+    label: "🔍 Zoom inteligente",
+    description: "Aplica pequenos zooms e reposicionamentos nos destaques",
+    Icon: Search,
+  },
+  {
+    id: "hud_safe",
+    label: "📺 HUD preservado",
+    description: "Evita cortar minimapa, vida, munição e interface do jogo",
+    Icon: PanelLeftClose,
+  },
+  {
+    id: "cinematic_gameplay",
+    label: "🎥 Cinematográfico",
+    description: "Crop lento e suave para trailers e cutscenes",
+    Icon: Video,
+  },
+  {
+    id: "facecam_gameplay",
+    label: "👤 Facecam + Gameplay",
+    description: "Detecta a webcam separadamente e preserva o jogo",
+    Icon: Play,
+  },
+];
+
+const allFramingOptions = [...gameplayFramingOptions, ...framingOptions];
+
 const activeStatuses: ProjectStatus[] = [
   "queued",
   "downloading",
@@ -327,12 +403,15 @@ function friendlyProjectError(message: string | null) {
   ) {
     return "O YouTube recusou temporariamente o download. O projeto pode ser reprocessado depois da correção do yt-dlp.";
   }
+  if (/OpenCV|análise visual|analisar o gameplay/i.test(message)) {
+    return "O analisador visual de Games não conseguiu ler este vídeo. Verifique o OpenCV do processador e reprocesse o mesmo projeto.";
+  }
   return message;
 }
 
 function framingLabel(framing: Framing) {
   return (
-    framingOptions.find((option) => option.id === framing)?.label ||
+    allFramingOptions.find((option) => option.id === framing)?.label ||
     "Automático"
   );
 }
@@ -394,14 +473,14 @@ function LayoutPreview({
         <SourcePicture src={src} alt="" />
       </div>
     );
-  if (framing === "spotlight")
+  if (["spotlight", "facecam_gameplay"].includes(framing))
     return (
       <div className="layout-preview preview-spotlight">
         <SourcePicture src={src} alt={alt} />
         <SourcePicture src={src} alt="" />
       </div>
     );
-  if (framing === "fit")
+  if (["fit", "gameplay_full", "hud_safe"].includes(framing))
     return (
       <div className="layout-preview preview-fit">
         <SourcePicture src={src} alt="" />
@@ -597,6 +676,8 @@ export default function StudioApp({
   const [inspecting, setInspecting] = useState(false);
   const [creating, setCreating] = useState(false);
   const [format, setFormat] = useState<"9:16" | "16:9">("9:16");
+  const [contentProfile, setContentProfile] =
+    useState<ContentProfile>("podcast");
   const [framing, setFraming] = useState<Framing>("auto");
   const [prompt, setPrompt] = useState(
     "Selecione momentos claros, perguntas fortes, respostas, histórias e frases marcantes. Preserve o contexto e não distorça a mensagem.",
@@ -645,7 +726,13 @@ export default function StudioApp({
     ? captionStyles
     : [captionStyles[0]];
   const availableFramingOptions = features.vertical
-    ? framingOptions
+    ? contentProfile === "games"
+      ? [
+          ...gameplayFramingOptions,
+          ...framingOptions.filter((option) => option.id === "manual"),
+          ...framingOptions.filter((option) => option.id !== "manual"),
+        ]
+      : framingOptions
     : framingOptions.filter((option) => option.id === "fit");
   const selectedCaption =
     availableCaptionStyles.find((style) => style.id === captionStyle) ||
@@ -751,15 +838,26 @@ export default function StudioApp({
     if (next === "clips" && !currentProjectId && readyProjects[0])
       setCurrentProjectId(readyProjects[0].id);
   }
+  function chooseContentProfile(next: ContentProfile) {
+    setContentProfile(next);
+    if (next === "games") {
+      setFraming("gameplay");
+      return;
+    }
+    if (gameplayFramingOptions.some((option) => option.id === framing))
+      setFraming(next === "podcast" ? "auto" : "center");
+  }
   function resetNewProject() {
     setVideoUrl("");
     setMetadata(null);
     setInputError("");
     setFormat("9:16");
+    setContentProfile("podcast");
     setFraming("auto");
     setClipDuration("60");
     setAnalysisMinutes(1);
     setEditingProjectId(null);
+    setCaptionStyle("impact");
     setRenderOptions({ ...defaultRenderOptions });
   }
   function openNewProject() {
@@ -787,6 +885,7 @@ export default function StudioApp({
       canonicalUrl: project.sourceUrl,
     });
     setFormat(project.format);
+    setContentProfile(project.contentProfile || "podcast");
     setFraming(project.framing);
     setPrompt(project.prompt || "");
     setClipDuration(String(project.requestedClipSeconds));
@@ -865,6 +964,7 @@ export default function StudioApp({
         analysisMinutes,
         clipDuration: Number(clipDuration),
         format,
+        contentProfile,
         framing,
         prompt,
         captionStyle,
@@ -2056,6 +2156,39 @@ export default function StudioApp({
                   </div>
                 </div>
                 <div className="option-block">
+                  <label>Tipo de conteúdo</label>
+                  <div className="content-profile-options">
+                    {(
+                      [
+                        ["podcast", "🎙️ Podcast", "Pessoas, entrevistas e conversas"],
+                        ["games", "🎮 Games", "Gameplay, trailers e cutscenes"],
+                        ["general", "🎬 Geral", "Conteúdo visual variado"],
+                      ] as const
+                    ).map(([id, label, description]) => (
+                      <button
+                        key={id}
+                        className={contentProfile === id ? "selected" : ""}
+                        onClick={() => chooseContentProfile(id)}
+                      >
+                        <strong>{label}</strong>
+                        <small>{description}</small>
+                        {contentProfile === id && <Check />}
+                      </button>
+                    ))}
+                  </div>
+                  {contentProfile === "games" && (
+                    <div className="gameplay-recommendation">
+                      <span>RECOMENDADO</span>
+                      <strong>🎮 Gameplay inteligente</strong>
+                      <p>
+                        Segue automaticamente a ação do jogo, veículos,
+                        personagem e pontos importantes da cena sem depender de
+                        rostos.
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className="option-block">
                   <label>Enquadramento</label>
                   <div className="layout-options">
                     {availableFramingOptions.map(
@@ -2088,8 +2221,9 @@ export default function StudioApp({
                       <div>
                         <strong>Rastreamento otimizado para CPU</strong>
                         <p>
-                          Analisa amostras de quadros, suaviza o movimento e usa
-                          o centro como fallback seguro.
+                          {contentProfile === "games"
+                            ? "Detecta ação e mudanças de cena em amostras, usa dead-zone e limita a velocidade do crop. O rosto só ganha prioridade quando realmente domina a cena."
+                            : "Analisa amostras de quadros, suaviza o movimento e usa o centro como fallback seguro."}
                         </p>
                       </div>
                     </div>
@@ -2298,9 +2432,11 @@ export default function StudioApp({
                         alt={metadata.title}
                         framing={format === "16:9" ? "fit" : framing}
                       />
-                      <div className={`caption-overlay ${selectedCaption.css}`}>
-                        {selectedCaption.sample}
-                      </div>
+                      {captionStyle !== "none" && (
+                        <div className={`caption-overlay ${selectedCaption.css}`}>
+                          {selectedCaption.sample}
+                        </div>
+                      )}
                       <span className="handle-preview">@{userHandle}</span>
                     </div>
                     <div className="preview-caption-meta">
@@ -2320,6 +2456,9 @@ export default function StudioApp({
                       >
                         <span className={style.css}>{style.sample}</span>
                         <strong>{style.label}</strong>
+                        {"description" in style && style.description && (
+                          <small>{style.description}</small>
+                        )}
                         {captionStyle === style.id && (
                           <i>
                             <Check size={13} />
@@ -2332,7 +2471,7 @@ export default function StudioApp({
               </section>
             )}
 
-            {wizardStep === 3 && metadata && (
+            {wizardStep === 3 && metadata && captionStyle !== "none" && (
               <section className="caption-v2-controls">
                 <div>
                   <span>CONTROLES V2</span>
@@ -2527,6 +2666,20 @@ export default function StudioApp({
               </section>
             )}
 
+            {wizardStep === 3 && metadata && captionStyle === "none" && (
+              <section className="caption-disabled-note">
+                <Captions />
+                <div>
+                  <strong>Exportação limpa, sem texto sobre o vídeo</strong>
+                  <p>
+                    A transcrição continua disponível internamente para a IA,
+                    mas o FFmpeg não cria arquivo ASS, não desenha textos e não
+                    reserva espaço para legenda.
+                  </p>
+                </div>
+              </section>
+            )}
+
             {wizardStep === 4 && metadata && (
               <section className="wizard-step review-step">
                 <span className="step-kicker">PASSO 5 DE 5</span>
@@ -2564,6 +2717,12 @@ export default function StudioApp({
                           : "Horizontal 16:9"}
                       </strong>
                       <em>
+                        {contentProfile === "games"
+                          ? "Games / Gameplay"
+                          : contentProfile === "podcast"
+                            ? "Podcast / Pessoas"
+                            : "Vídeo geral"}
+                        {" • "}
                         {framingLabel(format === "16:9" ? "fit" : framing)}
                       </em>
                     </div>
@@ -2587,7 +2746,11 @@ export default function StudioApp({
                     <div>
                       <small>LEGENDA</small>
                       <strong>{selectedCaption.label}</strong>
-                      <em>Português automático</em>
+                      <em>
+                        {captionStyle === "none"
+                          ? "Sem texto no arquivo final"
+                          : "Português automático"}
+                      </em>
                     </div>
                     <ChevronRight />
                   </button>
@@ -2608,8 +2771,8 @@ export default function StudioApp({
                   <div>
                     <strong>Etapas reais</strong>
                     <p>
-                      Download autorizado, detecção de rosto, transcrição,
-                      seleção editorial e renderização com FFmpeg.
+                      Download autorizado, análise visual e de cenas,
+                      transcrição, seleção editorial e renderização com FFmpeg.
                     </p>
                   </div>
                 </div>

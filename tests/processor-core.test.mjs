@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   buildAss,
   buildSrt,
+  buildVideoFilter,
   formatSrtTime,
   focusCropExpression,
+  gameplayZoomExpression,
   normalizeClipCandidates,
   normalizeYouTubeUrl,
   shouldTranscribeAudio,
   transcriptForAnalysis,
+  visualFallbackCandidates,
+  visualTimelineForAnalysis,
 } from "../processor/core.mjs";
 
 test("normaliza somente links individuais do YouTube", () => {
@@ -37,6 +45,149 @@ test("gera expressão de foco suave e limitada para o FFmpeg", () => {
     { t: 2, x: 0.8 },
   ]);
   assert.match(expression, /if\(lt\(t,2\),0\.2\+\(0\.8-0\.2\)/);
+  assert.match(
+    gameplayZoomExpression([
+      { t: 0, zoom: 1 },
+      { t: 2, zoom: 1.4 },
+    ]),
+    /1\.16/,
+  );
+});
+
+test("gera filtros reais para Games e remove totalmente a legenda", () => {
+  const tracking = {
+    samples: [
+      { t: 0, x: 0.35, zoom: 1 },
+      { t: 1, x: 0.7, zoom: 1.12, sceneCut: true },
+    ],
+    facecam: { x: 0.72, y: 0.04, width: 0.22, height: 0.28 },
+  };
+  const gameplay = buildVideoFilter(
+    { format: "9:16", framing: "gameplay" },
+    null,
+    tracking,
+    { blurStrength: 20 },
+  );
+  assert.match(gameplay, /crop=.*if\(lt\(t,1\)/);
+  assert.doesNotMatch(gameplay, /subtitles=/);
+  assert.match(
+    buildVideoFilter(
+      { format: "9:16", framing: "smart_zoom" },
+      null,
+      tracking,
+      { blurStrength: 20 },
+    ),
+    /eval=frame,crop=1080:1920/,
+  );
+  assert.match(
+    buildVideoFilter(
+      { format: "9:16", framing: "hud_safe" },
+      null,
+      tracking,
+      { blurStrength: 18 },
+    ),
+    /scale=1040:1800/,
+  );
+  assert.match(
+    buildVideoFilter(
+      { format: "9:16", framing: "facecam_gameplay" },
+      null,
+      tracking,
+      { blurStrength: 18 },
+    ),
+    /\[cam\]crop=.*overlay=40:72/,
+  );
+});
+
+test("FFmpeg aceita os filtros Games sem legenda", (context) => {
+  if (spawnSync("ffmpeg", ["-version"], { encoding: "utf8" }).status !== 0) {
+    context.skip("FFmpeg não está disponível neste ambiente");
+    return;
+  }
+  const tracking = {
+    samples: [
+      { t: 0, x: 0.35, zoom: 1 },
+      { t: 0.2, x: 0.68, zoom: 1.1 },
+    ],
+    facecam: { x: 0.7, y: 0.04, width: 0.24, height: 0.3 },
+  };
+  for (const framing of [
+    "gameplay",
+    "exploration",
+    "smart_zoom",
+    "gameplay_full",
+    "hud_safe",
+    "facecam_gameplay",
+  ]) {
+    const filter = buildVideoFilter(
+      { format: "9:16", framing },
+      null,
+      tracking,
+      { blurStrength: 12 },
+    );
+    const result = spawnSync(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=blue:s=640x360:d=0.3:r=5",
+        "-filter_complex",
+        filter,
+        "-map",
+        "[v]",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    assert.equal(result.status, 0, `${framing}: ${result.stderr}`);
+  }
+
+  const directory = mkdtempSync(join(tmpdir(), "stormcast-filter-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const subtitlePath = join(directory, "legenda.ass");
+  writeFileSync(
+    subtitlePath,
+    buildAss([{ start: 0, end: 0.3, text: "Teste real" }], 0, 0.3, {
+      format: "9:16",
+      safeArea: "shorts",
+    }),
+  );
+  const captionResult = spawnSync(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=blue:s=640x360:d=0.3:r=5",
+      "-filter_complex",
+      buildVideoFilter(
+        { format: "9:16", framing: "gameplay" },
+        subtitlePath,
+        tracking,
+        { blurStrength: 12 },
+      ),
+      "-map",
+      "[v]",
+      "-frames:v",
+      "1",
+      "-f",
+      "null",
+      "-",
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  assert.equal(captionResult.status, 0, captionResult.stderr);
 });
 
 test("gera SRT relativo ao início do corte", () => {
@@ -194,4 +345,19 @@ test("usa a duração como alvo e rejeita assunto sem conclusão", () => {
   assert.equal(result.length, 1);
   assert.equal(result[0].title, "História completa");
   assert.equal(result[0].durationSeconds, 130);
+});
+
+test("seleciona gameplay visual mesmo sem fala", () => {
+  const events = [
+    { start: 20, end: 28, score: 96, motion: 92, change: 88, sceneCuts: 1, focusX: 0.72 },
+    { start: 150, end: 158, score: 90, motion: 84, change: 79, sceneCuts: 0, focusX: 0.31 },
+  ];
+  assert.match(visualTimelineForAnalysis(events), /ação=direita/);
+  const fallback = visualFallbackCandidates(events, 240, 60, 3);
+  const clips = normalizeClipCandidates(fallback, [], 240, 60, {
+    contentProfile: "games",
+  });
+  assert.equal(clips.length, 2);
+  assert.equal(clips[0].title, "Destaque visual do gameplay");
+  assert.ok(clips.every((clip) => clip.durationSeconds >= 20));
 });

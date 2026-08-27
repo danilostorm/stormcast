@@ -264,6 +264,27 @@ export function transcriptForAnalysis(segments) {
     .join("\n");
 }
 
+export function visualTimelineForAnalysis(events) {
+  return (Array.isArray(events) ? events : [])
+    .map((event) => {
+      const start = Math.max(0, Number(event?.start) || 0);
+      const end = Math.max(start, Number(event?.end) || start);
+      const score = Math.max(0, Math.min(100, Math.round(Number(event?.score) || 0)));
+      const motion = Math.max(0, Math.min(100, Math.round(Number(event?.motion) || 0)));
+      const change = Math.max(0, Math.min(100, Math.round(Number(event?.change) || 0)));
+      const cuts = Math.max(0, Math.round(Number(event?.sceneCuts) || 0));
+      const focus = Number.isFinite(Number(event?.focusX))
+        ? Number(event.focusX) < 0.4
+          ? "esquerda"
+          : Number(event.focusX) > 0.6
+            ? "direita"
+            : "centro"
+        : "centro";
+      return `[${start.toFixed(2)}-${end.toFixed(2)}] interesse=${score} movimento=${motion} mudança=${change} cortes_de_cena=${cuts} ação=${focus}`;
+    })
+    .join("\n");
+}
+
 function overlapRatio(first, second) {
   const overlap = Math.max(
     0,
@@ -281,6 +302,7 @@ export function normalizeClipCandidates(
   segments,
   analysisSeconds,
   requestedSeconds,
+  options = {},
 ) {
   if (!Array.isArray(rawClips)) return [];
   const maximum = Math.max(1, Number(analysisSeconds) || 1);
@@ -301,13 +323,14 @@ export function normalizeClipCandidates(
     start = Math.max(0, Math.min(maximum - 1, start));
     end = Math.max(start + 1, Math.min(maximum, end));
 
-    const nearStart = segments.find(
+    const transcriptSegments = Array.isArray(segments) ? segments : [];
+    const nearStart = transcriptSegments.find(
       (segment) =>
         Number(segment.end) >= start && Number(segment.start) <= start + 4,
     );
     if (nearStart && Math.abs(Number(nearStart.start) - start) <= 4)
       start = Math.max(0, Number(nearStart.start));
-    const nearEnd = segments.find(
+    const nearEnd = transcriptSegments.find(
       (segment) => Number(segment.start) <= end && Number(segment.end) >= end,
     );
     if (
@@ -330,7 +353,13 @@ export function normalizeClipCandidates(
       ),
       caption: cleanText(raw?.caption, "Confira este trecho.", 360),
       reason: cleanText(raw?.reason, "Trecho claro e completo.", 240),
-      endingText: cleanText(raw?.ending_text, "Conclusão do trecho.", 240),
+      endingText: cleanText(
+        raw?.ending_text,
+        options.contentProfile === "games"
+          ? "A sequência visual termina em uma transição natural."
+          : "Conclusão do trecho.",
+        240,
+      ),
       startSeconds: Number(start.toFixed(3)),
       endSeconds: Number(end.toFixed(3)),
       durationSeconds: Number(duration.toFixed(3)),
@@ -342,6 +371,71 @@ export function normalizeClipCandidates(
   }
 
   return normalized.sort((a, b) => b.score - a.score).slice(0, 8);
+}
+
+export function visualFallbackCandidates(
+  events,
+  analysisSeconds,
+  requestedSeconds,
+  maximumCount = 8,
+) {
+  const maximum = Math.max(1, Number(analysisSeconds) || 1);
+  const target = Math.max(30, Math.min(180, Number(requestedSeconds) || 60));
+  const ranked = (Array.isArray(events) ? events : [])
+    .map((event) => ({
+      start: Math.max(0, Number(event?.start) || 0),
+      end: Math.max(0, Number(event?.end) || 0),
+      score: Math.max(1, Math.min(100, Math.round(Number(event?.score) || 1))),
+      motion: Math.max(0, Math.min(100, Math.round(Number(event?.motion) || 0))),
+      change: Math.max(0, Math.min(100, Math.round(Number(event?.change) || 0))),
+      sceneCuts: Math.max(0, Math.round(Number(event?.sceneCuts) || 0)),
+    }))
+    .filter((event) => event.end > event.start)
+    .sort((left, right) => right.score - left.score);
+  const output = [];
+  for (const event of ranked) {
+    const midpoint = (event.start + event.end) / 2;
+    let start = Math.max(0, midpoint - target / 2);
+    let end = Math.min(maximum, start + target);
+    start = Math.max(0, end - target);
+    const candidate = {
+      title: "Destaque visual do gameplay",
+      hook: "Uma sequência de alta atividade visual.",
+      caption: "Momento selecionado pela análise visual do gameplay.",
+      reason: `Interesse visual ${event.score}/100, movimento ${event.motion}/100 e mudança ${event.change}/100.`,
+      start_seconds: Number(start.toFixed(3)),
+      end_seconds: Number(end.toFixed(3)),
+      complete_thought: true,
+      ending_text:
+        event.sceneCuts > 0
+          ? "A sequência termina próxima a uma mudança natural de cena."
+          : "A sequência visual termina depois do pico de atividade.",
+      score: event.score,
+    };
+    const normalizedShape = {
+      startSeconds: candidate.start_seconds,
+      endSeconds: candidate.end_seconds,
+      durationSeconds: candidate.end_seconds - candidate.start_seconds,
+    };
+    if (
+      output.some(
+        (existing) =>
+          overlapRatio(
+            {
+              startSeconds: existing.start_seconds,
+              endSeconds: existing.end_seconds,
+              durationSeconds: existing.end_seconds - existing.start_seconds,
+            },
+            normalizedShape,
+          ) > 0.55,
+      )
+    )
+      continue;
+    output.push(candidate);
+    if (output.length >= Math.max(1, Math.min(8, Number(maximumCount) || 8)))
+      break;
+  }
+  return output;
 }
 
 export function desiredClipCount(analysisSeconds) {
@@ -373,4 +467,129 @@ export function focusCropExpression(samples) {
     expression = `if(lt(t,${next.t}),${interpolation},${expression})`;
   }
   return expression;
+}
+
+export function gameplayZoomExpression(samples) {
+  const points = (Array.isArray(samples) ? samples : [])
+    .map((sample) => ({ t: Number(sample?.t), zoom: Number(sample?.zoom) }))
+    .filter(
+      (sample) =>
+        Number.isFinite(sample.t) &&
+        sample.t >= 0 &&
+        Number.isFinite(sample.zoom),
+    )
+    .map((sample) => ({
+      t: Number(sample.t.toFixed(2)),
+      zoom: Number(Math.max(1, Math.min(1.16, sample.zoom)).toFixed(4)),
+    }))
+    .sort((left, right) => left.t - right.t)
+    .slice(0, 30);
+  if (!points.length) return "1";
+  if (points.length === 1) return String(points[0].zoom);
+  let expression = String(points.at(-1).zoom);
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const span = Math.max(0.01, next.t - current.t);
+    const interpolation = `${current.zoom}+(${next.zoom}-${current.zoom})*(t-${current.t})/${span.toFixed(2)}`;
+    expression = `if(lt(t,${next.t}),${interpolation},${expression})`;
+  }
+  return expression;
+}
+
+function escapedFilterPath(filePath) {
+  return String(filePath || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+    .replace(/,/g, "\\,")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
+}
+
+function verticalCrop(focus = "0.5", widthRatio = "9/16") {
+  return `crop='ih*${widthRatio}':ih:'max(0,min(iw-ow,(${focus})*iw-ow/2))':0`;
+}
+
+export function buildVideoFilter(
+  job,
+  subtitlePath,
+  tracking = { samples: [] },
+  options = {},
+) {
+  const subtitles = subtitlePath
+    ? `,subtitles='${escapedFilterPath(subtitlePath)}'`
+    : "";
+  const samples = Array.isArray(tracking?.samples) ? tracking.samples : [];
+  const blur = Math.max(1, Math.round(Number(options.blurStrength) || 20));
+  if (job.format === "16:9")
+    return `[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black${subtitles}[v]`;
+  if (job.framing === "center")
+    return `[0:v]${verticalCrop("0.5")},scale=1080:1920${subtitles}[v]`;
+  if (["auto", "face", "participant"].includes(job.framing))
+    return `[0:v]${verticalCrop(focusCropExpression(samples))},scale=1080:1920${subtitles}[v]`;
+  if (
+    [
+      "gameplay",
+      "vehicle",
+      "action",
+      "character_gameplay",
+      "cinematic_gameplay",
+    ].includes(job.framing)
+  )
+    return `[0:v]${verticalCrop(focusCropExpression(samples))},scale=1080:1920${subtitles}[v]`;
+  if (job.framing === "exploration") {
+    const focus = focusCropExpression(samples);
+    return `[0:v]split=2[bg][scene];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=${blur}:${Math.max(1, Math.round(blur / 2))}[blur];[scene]scale=1180:1000:force_original_aspect_ratio=decrease,crop=1080:664:'max(0,min(iw-ow,(${focus})*iw-ow/2))':0[scenev];[blur][scenev]overlay=0:'max(140,(H-h)/2-60)'${subtitles}[v]`;
+  }
+  if (job.framing === "smart_zoom") {
+    const focus = focusCropExpression(samples);
+    const zoom = gameplayZoomExpression(samples);
+    return `[0:v]${verticalCrop(focus)},scale=w='2*trunc(540*(${zoom}))':h='2*trunc(960*(${zoom}))':eval=frame,crop=1080:1920:(iw-ow)/2:(ih-oh)/2${subtitles}[v]`;
+  }
+  if (job.framing === "manual") {
+    const focus = Math.max(
+      0.08,
+      Math.min(0.92, 0.5 + (Number(options.manualPosition) || 0) * 0.42),
+    );
+    return `[0:v]${verticalCrop(String(focus))},scale=1080:1920${subtitles}[v]`;
+  }
+  if (job.framing === "split")
+    return `[0:v]split=2[left][right];[left]crop=iw/2:ih:0:0,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[leftv];[right]crop=iw/2:ih:iw/2:0,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[rightv];[leftv][rightv]vstack=inputs=2${subtitles}[v]`;
+  if (job.framing === "spotlight") {
+    const focus = focusCropExpression(samples);
+    return `[0:v]split=2[face][full];[face]${verticalCrop(focus, "1080/1275")},scale=1080:1275[facev];[full]scale=1080:645:force_original_aspect_ratio=decrease,pad=1080:645:(ow-iw)/2:(oh-ih)/2:black[fullv];[facev][fullv]vstack=inputs=2${subtitles}[v]`;
+  }
+  if (job.framing === "react") {
+    const focus = focusCropExpression(samples);
+    return `[0:v]split=2[main][react];[main]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[mainv];[react]${verticalCrop(focus)},scale=410:730[reactv];[mainv][reactv]overlay=W-w-44:44:format=auto${subtitles}[v]`;
+  }
+  if (job.framing === "facecam_gameplay") {
+    const focus = focusCropExpression(samples);
+    const facecam = tracking?.facecam;
+    if (
+      facecam &&
+      [facecam.x, facecam.y, facecam.width, facecam.height].every((value) =>
+        Number.isFinite(Number(value)),
+      )
+    ) {
+      const x = Math.max(0, Math.min(0.94, Number(facecam.x))).toFixed(4);
+      const y = Math.max(0, Math.min(0.94, Number(facecam.y))).toFixed(4);
+      const width = Math.max(
+        0.06,
+        Math.min(1 - Number(x), Number(facecam.width)),
+      ).toFixed(4);
+      const height = Math.max(
+        0.06,
+        Math.min(1 - Number(y), Number(facecam.height)),
+      ).toFixed(4);
+      return `[0:v]split=2[main][cam];[main]${verticalCrop(focus)},scale=1080:1920[mainv];[cam]crop='iw*${width}':'ih*${height}':'iw*${x}':'ih*${y}',scale=360:260:force_original_aspect_ratio=decrease,pad=376:276:(ow-iw)/2:(oh-ih)/2:color=0x0b0d12[camv];[mainv][camv]overlay=40:72:format=auto${subtitles}[v]`;
+    }
+    return `[0:v]${verticalCrop(focus)},scale=1080:1920${subtitles}[v]`;
+  }
+  const foregroundWidth = job.framing === "hud_safe" ? 1040 : 1080;
+  const foregroundHeight = job.framing === "hud_safe" ? 1800 : 1920;
+  const foregroundY =
+    job.framing === "hud_safe" ? "'max(120,(H-h)/2-70)'" : "(H-h)/2";
+  return `[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=${blur}:${Math.max(1, Math.round(blur / 2))}[blur];[fg]scale=${foregroundWidth}:${foregroundHeight}:force_original_aspect_ratio=decrease[front];[blur][front]overlay=(W-w)/2:${foregroundY}${subtitles}[v]`;
 }

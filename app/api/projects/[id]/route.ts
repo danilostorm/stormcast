@@ -5,8 +5,10 @@ import { randomToken } from "../../../../lib/security";
 import { processorConfigured } from "../../../../lib/youtube";
 import {
   captionStyleIds,
+  contentProfileIds,
   framingIds,
   normalizeRenderOptions,
+  type ContentProfileId,
   type FramingId,
 } from "../../../../lib/render-options";
 
@@ -22,6 +24,7 @@ type ProjectRow = {
   requested_analysis_minutes: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
+  content_profile: ContentProfileId;
   framing: FramingId;
   prompt: string;
   caption_style: string;
@@ -35,6 +38,7 @@ type ProjectActionBody = {
   analysisMinutes?: unknown;
   clipDuration?: unknown;
   format?: unknown;
+  contentProfile?: unknown;
   framing?: unknown;
   prompt?: unknown;
   captionStyle?: unknown;
@@ -76,6 +80,15 @@ function normalizedSettings(row: ProjectRow, body: ProjectActionBody) {
         : body.action === "update_and_retry"
           ? "9:16"
           : row.format,
+    contentProfile:
+      body.action === "update_and_retry" &&
+      contentProfileIds.includes(
+        String(body.contentProfile) as ContentProfileId,
+      )
+        ? String(body.contentProfile)
+        : body.action === "update_and_retry"
+          ? "podcast"
+          : row.content_profile,
     framing:
       body.action === "update_and_retry" &&
       framingIds.includes(String(body.framing) as FramingId)
@@ -138,7 +151,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     const row = await queryOne<ProjectRow>(
       `SELECT id, user_id, title, source_url, source_video_id, source_duration_seconds,
-        requested_analysis_minutes, requested_clip_seconds, format, framing, prompt,
+        requested_analysis_minutes, requested_clip_seconds, format, content_profile, framing, prompt,
         caption_style, render_options, thumbnail_url, status
        FROM projects WHERE id = ? AND user_id = ? LIMIT 1`,
       [id, user.id],
@@ -217,9 +230,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       await execute(
         `INSERT INTO projects (
           id, user_id, title, source_url, source_platform, source_video_id, source_duration_seconds,
-          requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style, render_options,
+          requested_analysis_minutes, requested_clip_seconds, format, content_profile, framing, prompt, caption_style, render_options,
           thumbnail_url, status, stage, progress, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
         [
           newId,
           user.id,
@@ -230,6 +243,7 @@ export async function PATCH(request: Request, context: RouteContext) {
           settings.analysisMinutes,
           settings.clipDuration,
           settings.format,
+          settings.contentProfile,
           settings.framing,
           settings.prompt,
           settings.captionStyle,
@@ -251,13 +265,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     ]);
     await execute(
       `UPDATE projects SET requested_analysis_minutes = ?, analysis_seconds = 0, requested_clip_seconds = ?,
-        format = ?, framing = ?, prompt = ?, caption_style = ?, render_options = ?, status = 'queued', stage = 'Aguardando processador',
+        format = ?, content_profile = ?, framing = ?, prompt = ?, caption_style = ?, render_options = ?, status = 'queued', stage = 'Aguardando processador',
         progress = 1, error_message = NULL, cancel_requested = 0, credits_charged = 0,
         started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?`,
       [
         settings.analysisMinutes,
         settings.clipDuration,
         settings.format,
+        settings.contentProfile,
         settings.framing,
         settings.prompt,
         settings.captionStyle,

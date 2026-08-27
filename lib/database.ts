@@ -97,6 +97,7 @@ const schemaStatements = [
     analysis_seconds INTEGER NOT NULL DEFAULT 0,
     requested_clip_seconds INTEGER NOT NULL DEFAULT 60,
     format TEXT NOT NULL DEFAULT '9:16',
+    content_profile TEXT NOT NULL DEFAULT 'podcast',
     framing TEXT NOT NULL DEFAULT 'auto',
     prompt TEXT NOT NULL DEFAULT '',
     caption_style TEXT NOT NULL DEFAULT 'impact',
@@ -180,6 +181,7 @@ const schemaAlterStatements = [
   "ALTER TABLE users ADD COLUMN monthly_credit_limit INTEGER NOT NULL DEFAULT 120",
   "ALTER TABLE users ADD COLUMN max_active_projects INTEGER NOT NULL DEFAULT 1",
   "ALTER TABLE projects ADD COLUMN render_options TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE projects ADD COLUMN content_profile TEXT NOT NULL DEFAULT 'podcast'",
 ];
 
 function cloudflareDatabase() {

@@ -1,5 +1,10 @@
 import { queryAll, queryOne } from "./database";
-import { normalizeRenderOptions, type RenderOptions, type FramingId } from "./render-options";
+import {
+  normalizeRenderOptions,
+  type ContentProfileId,
+  type RenderOptions,
+  type FramingId,
+} from "./render-options";
 
 export type ProjectStatus = "queued" | "downloading" | "transcribing" | "analyzing" | "rendering" | "ready" | "failed" | "cancelled";
 
@@ -15,6 +20,7 @@ type ProjectRow = {
   analysis_seconds: number;
   requested_clip_seconds: number;
   format: "9:16" | "16:9";
+  content_profile: ContentProfileId;
   framing: FramingId;
   prompt: string;
   caption_style: string;
@@ -68,6 +74,7 @@ export type PublicProject = {
   analysisSeconds: number;
   requestedClipSeconds: number;
   format: "9:16" | "16:9";
+  contentProfile: ContentProfileId;
   framing: FramingId;
   prompt: string;
   captionStyle: string;
@@ -112,6 +119,7 @@ function publicProject(row: ProjectRow, clips: ClipRow[]): PublicProject {
     analysisSeconds: Number(row.analysis_seconds),
     requestedClipSeconds: Number(row.requested_clip_seconds),
     format: row.format,
+    contentProfile: row.content_profile,
     framing: row.framing,
     prompt: row.prompt,
     captionStyle: row.caption_style,
@@ -131,7 +139,7 @@ function publicProject(row: ProjectRow, clips: ClipRow[]): PublicProject {
 
 const projectColumns = `id, user_id, title, source_url, source_platform, source_video_id,
   source_duration_seconds, requested_analysis_minutes, analysis_seconds, requested_clip_seconds,
-  format, framing, prompt, caption_style, render_options, thumbnail_url, status, stage, progress, error_message,
+  format, content_profile, framing, prompt, caption_style, render_options, thumbnail_url, status, stage, progress, error_message,
   credits_charged, created_at, updated_at, started_at, completed_at`;
 
 const clipColumns = `id, project_id, title, hook, caption, start_ms, end_ms, duration_ms, score`;
