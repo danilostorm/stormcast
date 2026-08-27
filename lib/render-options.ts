@@ -1,5 +1,27 @@
-export const framingIds = ["auto", "face", "participant", "center", "split", "react", "fit", "manual"] as const;
-export const captionStyleIds = ["impact", "karaoke", "clean", "bold", "box", "keyword", "minimal", "neon", "podcast", "cinematic", "gospel", "reels", "twolines", "lower", "title", "brand"] as const;
+export const contentProfileIds = ["podcast", "games", "general"] as const;
+export const framingIds = [
+  "auto",
+  "face",
+  "participant",
+  "center",
+  "split",
+  "spotlight",
+  "react",
+  "fit",
+  "manual",
+  "gameplay",
+  "vehicle",
+  "action",
+  "exploration",
+  "character_gameplay",
+  "gameplay_full",
+  "smart_zoom",
+  "hud_safe",
+  "cinematic_gameplay",
+  "facecam_gameplay",
+] as const;
+export const captionStyleIds = ["none", "impact", "karaoke", "clean", "bold", "box", "keyword", "minimal", "neon", "podcast", "cinematic", "gospel", "reels", "twolines", "lower", "title", "brand"] as const;
+export type ContentProfileId = typeof contentProfileIds[number];
 export type FramingId = typeof framingIds[number];
 export type CaptionStyleId = typeof captionStyleIds[number];
 

@@ -3,7 +3,12 @@ import { execute, queryOne } from "../../../lib/database";
 import { listProjects } from "../../../lib/projects";
 import { randomToken } from "../../../lib/security";
 import { normalizeYouTubeUrl, processorConfigured } from "../../../lib/youtube";
-import { captionStyleIds, framingIds, normalizeRenderOptions } from "../../../lib/render-options";
+import {
+  captionStyleIds,
+  contentProfileIds,
+  framingIds,
+  normalizeRenderOptions,
+} from "../../../lib/render-options";
 
 type CreateProjectBody = {
   sourceUrl?: unknown;
@@ -14,6 +19,7 @@ type CreateProjectBody = {
   analysisMinutes?: unknown;
   clipDuration?: unknown;
   format?: unknown;
+  contentProfile?: unknown;
   framing?: unknown;
   prompt?: unknown;
   captionStyle?: unknown;
@@ -90,6 +96,11 @@ export async function POST(request: Request) {
     }
 
     const format = body.format === "16:9" ? "16:9" : "9:16";
+    const contentProfile = contentProfileIds.includes(
+      String(body.contentProfile) as (typeof contentProfileIds)[number],
+    )
+      ? String(body.contentProfile)
+      : "podcast";
     const framing = framingIds.includes(String(body.framing) as typeof framingIds[number])
       ? String(body.framing)
       : "auto";
@@ -107,9 +118,9 @@ export async function POST(request: Request) {
     await execute(
       `INSERT INTO projects (
         id, user_id, title, source_url, source_platform, source_video_id, source_duration_seconds,
-        requested_analysis_minutes, requested_clip_seconds, format, framing, prompt, caption_style, render_options,
+        requested_analysis_minutes, requested_clip_seconds, format, content_profile, framing, prompt, caption_style, render_options,
         thumbnail_url, status, stage, progress, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, 'YouTube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Aguardando processador', 1, ?, ?)`,
       [
         id,
         user.id,
@@ -120,6 +131,7 @@ export async function POST(request: Request) {
         analysisMinutes,
         requestedClipSeconds,
         format,
+        contentProfile,
         framing,
         prompt,
         captionStyle,

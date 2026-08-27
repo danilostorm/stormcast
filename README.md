@@ -12,8 +12,10 @@ Plataforma para transformar vídeos longos autorizados em cortes legendados para
 - download temporário, áudio segmentado e limpeza automática;
 - transcrição com timestamps pela OpenAI ou Groq;
 - escolha estruturada dos melhores trechos por OpenAI, Groq, DeepSeek, Gemini, OpenRouter ou provedor compatível;
-- renderização local com FFmpeg em 9:16 ou 16:9, cinco enquadramentos e 12 estilos de legenda;
+- renderização local com FFmpeg em 9:16 ou 16:9, enquadramentos para pessoas, conteúdo geral e Games;
 - detecção facial opcional com OpenCV para movimentar o recorte vertical automaticamente;
+- análise visual de gameplay em CPU, com movimento, mudança de cena, dead-zone, suavização e preservação de HUD/facecam;
+- seleção editorial própria para Games, inclusive em sequências visuais sem fala, e exportação opcional sem legenda;
 - prévia e download de MP4 acessíveis somente pelo dono do projeto;
 - cobrança de créditos apenas depois da conclusão de todos os cortes;
 - cancelamento, falha sem cobrança e retomada da fila após reinício.
@@ -56,7 +58,7 @@ Os comandos abaixo consideram o projeto em `/var/www/stormcast` e o serviço exe
 sudo apt update
 sudo apt install -y ffmpeg python3-venv ca-certificates
 sudo python3 -m venv /opt/stormcast-tools
-sudo /opt/stormcast-tools/bin/pip install --upgrade pip yt-dlp opencv-python-headless
+sudo /opt/stormcast-tools/bin/pip install --upgrade pip yt-dlp "opencv-python-headless<5"
 /usr/bin/ffmpeg -version
 /opt/stormcast-tools/bin/yt-dlp --version
 /opt/stormcast-tools/bin/python -c "import cv2; print(cv2.__version__)"
